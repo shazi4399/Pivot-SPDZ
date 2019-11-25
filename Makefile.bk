@@ -38,7 +38,7 @@ DEPS := $(wildcard */*.d)
 all: gen_input online offline externalIO bmr yao replicated shamir real-bmr spdz2k-party.x brain-party.x semi-party.x semi2k-party.x semi-bin-party.x mascot-party.x tiny-party.x
 
 ifeq ($(USE_NTL),1)
-all: overdrive she-offline cowgear-party.x
+all: overdrive she-offline cowgear-party.x hemi-party.x
 endif
 
 -include $(DEPS)
@@ -131,14 +131,6 @@ bankers-bonus-client.x: ExternalIO/bankers-bonus-client.cpp $(COMMON)
 bankers-bonus-commsec-client.x: ExternalIO/bankers-bonus-commsec-client.cpp $(COMMON)
 	$(CXX) $(CFLAGS) -o $@ $^ $(LDLIBS)
 
-vfl-logistic-func-test.x: ExternalIO/vfl-logistic-func-test.cpp $(COMMON)
-	$(CXX) $(CFLAGS) -o $@ $^ $(LDLIBS)
-
-lib: $(LIB)
-
-$(LIB): $(COMMON)
-	$(AR) -crs $@ $^
-
 simple-offline.x: $(FHEOFFLINE)
 pairwise-offline.x: $(FHEOFFLINE)
 cnc-offline.x: $(FHEOFFLINE)
@@ -173,6 +165,7 @@ malicious-shamir-party.x: Machines/ShamirMachine.o
 spdz2k-party.x: $(OT)
 semi-party.x: $(OT)
 semi2k-party.x: $(OT)
+hemi-party.x: $(FHEOFFLINE)
 cowgear-party.x: $(FHEOFFLINE) Protocols/CowGearOptions.o
 mascot-party.x: Machines/SPDZ.o $(OT)
 Player-Online.x: Machines/SPDZ.o $(OT)
@@ -207,7 +200,7 @@ mpir-global: mpir-setup
 
 mpir: mpir-setup
 	cd mpir; \
-	./configure --enable-cxx --enable-gmpcompat --prefix=$(CURDIR)/local
+	./configure --enable-cxx --prefix=$(CURDIR)/local
 	$(MAKE) -C mpir install
 	-echo MY_CFLAGS += -I./local/include >> CONFIG.mine
 	-echo MY_LDLIBS += -Wl,-rpath -Wl,./local/lib -L./local/lib >> CONFIG.mine

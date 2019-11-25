@@ -1,0 +1,195 @@
+# coding: latin-1
+"""
+  Provide logistic function MPC computation for CollaborativeML
+
+  Keep waiting enough clients connected to this program. Once enough clients connected, read the input values and compute the
+  logistic function, and return the gfp results (in the secret shared form) to the clients.
+
+  This program does in three steps:
+  (1) keep waiting enough clients MAX_NUM_CLIENTS connect, read the input values;
+  (2) compute the logistic function using the secret shares;
+  (3) save as secret shares before returning the clients;
+
+  Note each client connects in a single thread and so is potentially blocked.
+
+  Each round / game will reset and so this runs indefinitiely.
+"""
+
+from Compiler.types import sint, regint, Array, MemValue
+from Compiler.instructions import listen, acceptclientconnection
+from Compiler.library import print_ln, do_while, for_range
+from Compiler.util import if_else
+from Compiler import mpc_math, floatingpoint
+from random import seed, randrange
+from Compiler.program import Program
+import ml
+
+ARRAY_SIZE = 10
+MAX_NBITS = 14
+NULL = -2147483648
+
+FIXED_F = 16
+FIXED_K = 31
+sfix.set_precision(FIXED_F, FIXED_K)
+cfix.set_precision(FIXED_F, FIXED_K)
+
+PORT_NUM = 14000
+MAX_NUM_CLIENTS = 3
+
+
+def accept_client_input():
+    """
+    Wait for socket connection, send share of random value, receive input and deduce share.
+    Expect ARRAY_SIZE inputs: which are the secret shares of the current batch.
+    """
+    client_socket_id = regint()
+    print_ln('client_socket_id = %s', client_socket_id)
+    acceptclientconnection(client_socket_id, PORT_NUM)
+    print_ln('accept client connection on port = %s', PORT_NUM)
+
+    client_inputs = sint.receive_from_client(ARRAY_SIZE, client_socket_id)
+
+    return client_socket_id, client_inputs
+
+
+def accept_client():
+    client_socket_id = regint()
+    acceptclientconnection(client_socket_id, PORT_NUM)
+    last = regint.read_from_socket(client_socket_id)
+    return client_socket_id, last
+
+def client_input(client_socket_id):
+    """
+    Send share of random value, receive input and deduce share.
+    """
+
+    client_inputs = sint.receive_from_client(ARRAY_SIZE, client_socket_id)
+
+    return client_inputs
+
+
+def logistic_func(client_inputs):
+    result = Array(ARRAY_SIZE, sfix)
+    temp = Array(1, sfix)
+    @for_range(ARRAY_SIZE)
+    def _(j):
+        temp[0] = 0
+        @for_range(MAX_NUM_CLIENTS)
+        def inner(i):
+            temp[0] = temp[0] + client_inputs[i][j]
+        #print_ln("The temp[0] is %s", temp[0].reveal())
+        result[j] = ml.sigmoid(temp[0])
+        print_ln("The result[j] sigmoid function is %s", result[j].reveal())
+
+    return result
+
+
+def write_result_to_clients(sockets, number_clients, result):
+    """Send share of result to all clients."""
+    # However, in this way, every client receives the final result, which is not desirable,
+    # should split the result array into number_clients shares, and send each share to each client
+
+    sint_result = Array(ARRAY_SIZE, sint)
+    @for_range(ARRAY_SIZE)
+    def _(i):
+        sint_result[i] = result[i].v
+        print_ln('sint_result[%s] = %s', i, sint_result[i].reveal())
+
+    # split sint_result to number_clients parts and send each part to each client
+    sint_result_matrix = sint.Matrix(MAX_NUM_CLIENTS, ARRAY_SIZE)
+    temp_sum = Array(1, sint)
+    @for_range(ARRAY_SIZE)
+    def outer_loop(j):
+        temp_sum[0] = 0
+        @for_range(number_clients)
+        def inner_loop(i):
+            @if_e(i < number_clients - 1)
+            def _():
+                random_ij = sint.get_random_int(MAX_NBITS)
+                temp_sum[0] = temp_sum[0] + random_ij
+                sint_result_matrix[i][j] = random_ij
+            @else_
+            def _():
+                sint_result_matrix[i][j] = sint_result[j] - temp_sum[0]
+
+    """
+    @for_range(ARRAY_SIZE)
+    def _(j):
+        @for_range(number_clients)
+        def _(i):
+            print_ln('sint_result_matrix[%s][%s] = %s', i, j, sint_result_matrix[i][j].reveal())
+    """
+    print_ln('begin to write shares to each client')
+    @for_range(number_clients)
+    def loop_body(i):
+        print_ln('socket[%s] = %s', i, sockets[i])
+        sint.write_shares_to_socket(sockets[i], sint_result_matrix[i])
+
+
+def main():
+    """Listen in while loop for clients to join a game.
+    Once maximum reached or have notified that round finished, run comparison and return result."""
+    # Start listening for client socket connections
+    listen(PORT_NUM)
+    print_ln('Listening for client connections on base port %s', PORT_NUM)
+
+    @do_while
+    def computing_loop():
+        print_ln('Starting a new iteration.')
+
+        # Clients socket id (integer).
+        client_sockets = Array(MAX_NUM_CLIENTS, regint)
+        # Number of clients
+        number_clients = MemValue(regint(0))
+        # Clients secret inputs
+        client_values = sfix.Matrix(MAX_NUM_CLIENTS, ARRAY_SIZE)
+        # Keep track of received inputs
+        seen = Array(MAX_NUM_CLIENTS, regint)
+        seen.assign_all(0)
+
+        # step 1: Loop round waiting for each client to connect
+        @do_while
+        def client_connections():
+            client_id, last = accept_client()
+            @if_(client_id >= MAX_NUM_CLIENTS)
+            def _():
+                print_ln('client id too high')
+                crash()
+
+            client_sockets[client_id] = client_id
+            seen[client_id] = 1
+            @if_(last == 1)
+            def _():
+                number_clients.write(client_id + 1)
+
+            #return (sum(seen) < number_clients) + (number_clients == 0)
+            return sum(seen) < MAX_NUM_CLIENTS
+
+            #for j in range(ARRAY_SIZE):
+            #    client_values[number_clients][j] = sfix._new(inputs[j])
+
+            #number_clients.write(number_clients+1)
+
+            # continue while the expression is false
+            #return (number_clients >= MAX_NUM_CLIENTS) == 0
+
+
+        @for_range(MAX_NUM_CLIENTS)
+        def _(client_id):
+            inputs = Array(ARRAY_SIZE, sint)
+            inputs = client_input(client_id)
+            for j in range(ARRAY_SIZE):
+                client_values[client_id][j] = sfix._new(inputs[j])
+
+        # step 2: compute the logistic function
+
+        result = sfix.Array(ARRAY_SIZE)
+        result = logistic_func(client_values)
+
+        # step 3: write values back to the clients
+
+        write_result_to_clients(client_sockets, MAX_NUM_CLIENTS, result)
+
+        return True
+
+main()

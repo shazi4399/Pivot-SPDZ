@@ -7,9 +7,9 @@
  * the bankers_bonus.mpc program.
  *
  * Each connecting client:
- * - sends an increasing id to identify the client, starting with 0
- * - sends an integer (0 meaining more players will join this round or 1 meaning stop the round and calc the result).
+ * - sends a unique id to identify the client
  * - sends an integer input (bonus value to compare)
+ * - sends an integer (0 meaining more players will join this round or 1 meaning stop the round and calc the result).
  *
  * The result is returned authenticated with a share of a random value:
  * - share of winning unique id [y]
@@ -22,13 +22,13 @@
  * To run with 2 parties / SPDZ engines:
  *   ./Scripts/setup-online.sh to create triple shares for each party (spdz engine).
  *   ./compile.py bankers_bonus
- *   ./Scripts/run-online.sh bankers_bonus to run the engines.
+ *   ./Scripts/run-online bankers_bonus to run the engines.
  *
- *   ./bankers-bonus-client.x 0 2 100 0
- *   ./bankers-bonus-client.x 1 2 200 0
- *   ./bankers-bonus-client.x 2 2 50 1
+ *   ./bankers-bonus-client.x 123 2 100 0
+ *   ./bankers-bonus-client.x 456 2 200 0
+ *   ./bankers-bonus-client.x 789 2 50 1
  *
- *   Expect winner to be second client with id 1.
+ *   Expect winner to be second client with id 456.
  */
 
 #include "Math/gfp.h"
@@ -46,7 +46,7 @@
 // Send the private inputs masked with a random value.
 // Receive shares of a preprocessed triple from each SPDZ engine, combine and check the triples are valid.
 // Add the private input value to triple[0] and send to each spdz engine.
-void send_private_inputs(const vector<gfp>& values, vector<int>& sockets, int nparties)
+void send_private_inputs(vector<gfp>& values, vector<int>& sockets, int nparties)
 {
     int num_inputs = values.size();
     octetStream os;
@@ -169,20 +169,24 @@ int main(int argc, char** argv)
 
     for (int i = 0; i < 10; i++) {
 
-        cout << " ****** iteration " << i << "******" << endl;
+        cout <<" ****** iteration " << i << "******" << endl;
+
         // Setup connections from this client to each party socket
         vector<int> sockets(nparties);
-        for (int i = 0; i < nparties; i++) {
+        for (int i = 0; i < nparties; i++)
+        {
             set_up_client_socket(sockets[i], host_name.c_str(), port_base + i);
-            send(sockets[i], (octet * ) & my_client_id, sizeof(int));
-            octetStream os;
-            os.store(finish);
-            os.Send(sockets[i]);
         }
         cout << "Finish setup socket connections to SPDZ engines." << endl;
 
+        // Map inputs into gfp
+        vector<gfp> input_values_gfp(3);
+        input_values_gfp[0].assign(my_client_id);
+        input_values_gfp[1].assign(salary_value);
+        input_values_gfp[2].assign(finish);
+
         // Run the commputation
-        send_private_inputs({salary_value}, sockets, nparties);
+        send_private_inputs(input_values_gfp, sockets, nparties);
         cout << "Sent private inputs to each SPDZ engine, waiting for result..." << endl;
 
         // Get the result back (client_id of winning client)
@@ -193,6 +197,8 @@ int main(int argc, char** argv)
         for (unsigned int i = 0; i < sockets.size(); i++)
             close_client_socket(sockets[i]);
     }
+
+
 
     return 0;
 }
