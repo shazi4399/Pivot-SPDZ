@@ -1,0 +1,26 @@
+MY_CFLAGS += -I./local/include
+MY_LDLIBS += -Wl,-rpath -Wl,./local/lib -L./local/lib
+ARCH = -march=native
+MY_CFLAGS += -I./local/include
+MY_LDLIBS += -Wl,-rpath -Wl,./local/lib -L./local/lib
+ARCH = -march=native
+MY_CFLAGS += -I./local/include
+MY_LDLIBS += -Wl,-rpath -Wl,./local/lib -L./local/lib
+ARCH = -march=native
+MY_CFLAGS += -I./local/include
+MY_LDLIBS += -Wl,-rpath -Wl,./local/lib -L./local/lib
+ARCH = -march=native
+MY_CFLAGS += -I./local/include
+MY_LDLIBS += -Wl,-rpath -Wl,./local/lib -L./local/lib
+ARCH = -march=native
+MY_CFLAGS = -DINSECURE
+MY_CFLAGS += -I./local/include
+MY_LDLIBS += -Wl,-rpath -Wl,./local/lib -L./local/lib
+ARCH = -march=native
+MY_CFLAGS = -DINSECURE
+MY_CFLAGS += -I./local/include
+MY_LDLIBS += -Wl,-rpath -Wl,./local/lib -L./local/lib
+MY_CFLAGS += -I./local/include
+MY_LDLIBS += -Wl,-rpath -Wl,./local/lib -L./local/lib
+MY_CFLAGS += -I./local/include
+MY_LDLIBS += -Wl,-rpath -Wl,./local/lib -L./local/lib
