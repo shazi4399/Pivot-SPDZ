@@ -258,17 +258,21 @@ int main(int argc, char** argv)
 
     cout<<"Begin setup sockets"<<endl;
 
-    for (int xx = 0; xx < 10; xx++) {
+    for (int xx = 0; xx < 15; xx++) {
 
         cout << "iteration xx = " << xx << endl;
 
         // Setup connections from this client to each party socket
         vector<int> sockets = setup_sockets(nparties, my_client_id, host_name, port_base);
+        cout << "sockets[0] = " << sockets[0] << endl;
+        cout << "sockets[1] = " << sockets[1] << endl;
+        cout << "sockets[2] = " << sockets[2] << endl;
+
 
         cout << "Finish setup socket connections to SPDZ engines." << endl;
 
         int type = 0;
-        int global_split_num = 10;
+        int global_split_num = 250;
         int classes_num = 2;
 
         if (my_client_id == 0) {

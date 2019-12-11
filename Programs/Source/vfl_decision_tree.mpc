@@ -285,6 +285,7 @@ def main():
         print_ln('Finish step 1')
 
         # step 2: Receive parameters for further computation
+        print_ln('client_sockets[0] = %s', client_sockets[0])
         type, global_split_num, classes_num = client_public_parameters(client_sockets[0])
         print_ln('type = %s', type)
         print_ln('global_split_num = %s', global_split_num)
@@ -300,12 +301,12 @@ def main():
             def _(i):
                 clients_left_nums[i] = clients_left_nums[i] + input_left_nums[i]
                 clients_right_nums[i] = clients_right_nums[i] + input_right_nums[i]
-                print_ln('clients_left_nums[%s] = %s', i, clients_left_nums[i].reveal())
-                print_ln('clients_right_nums[%s] = %s', i, clients_right_nums[i].reveal())
+                #print_ln('clients_left_nums[%s] = %s', i, clients_left_nums[i].reveal())
+                #print_ln('clients_right_nums[%s] = %s', i, clients_right_nums[i].reveal())
                 @for_range(classes_num * 2)
                 def _(j):
                     clients_statistics[i][j] = clients_statistics[i][j] + input_statistics[i][j]
-                    print_ln('clients_statistics[%s][%s] = %s', i, j, clients_statistics[i][j].reveal())
+                    #print_ln('clients_statistics[%s][%s] = %s', i, j, clients_statistics[i][j].reveal())
 
         print_ln('Finish step 3')
 
