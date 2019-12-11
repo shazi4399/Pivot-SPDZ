@@ -134,6 +134,9 @@ bankers-bonus-commsec-client.x: ExternalIO/bankers-bonus-commsec-client.cpp $(CO
 vfl-logistic-func-test.x: ExternalIO/vfl-logistic-func-test.cpp $(COMMON)
 	$(CXX) $(CFLAGS) -o $@ $^ $(LDLIBS)
 
+vfl-decision-tree-test.x: ExternalIO/vfl-decision-tree-test.cpp $(COMMON)
+	$(CXX) $(CFLAGS) -o $@ $^ $(LDLIBS)
+
 lib: $(LIB)
 
 $(LIB): $(COMMON)

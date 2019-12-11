@@ -70,6 +70,24 @@ std::vector<int> setup_sockets(int n_parties, int my_client_id, const std::strin
 }
 
 
+void send_public_parameters(int type, int global_split_num, int classes_num, std::vector<int>& sockets, int n_parties) {
+
+    octetStream os;
+
+    gfp x = type;
+    gfp y = global_split_num;
+    gfp z = classes_num;
+
+    x.pack(os);
+    y.pack(os);
+    z.pack(os);
+
+    for (int i = 0; i < n_parties; i++) {
+        os.Send(sockets[i]);
+    }
+}
+
+
 void send_private_inputs(const std::vector<gfp>& values, std::vector<int>& sockets, int n_parties)
 {
     int num_inputs = values.size();
@@ -122,6 +140,7 @@ void send_private_batch_shares(std::vector<float> shares, std::vector<int>& sock
     // step 1: convert to int or long according to the fixed precision
     for (int i = 0; i < number_inputs; ++i) {
         long_shares[i] = static_cast<int>(round(shares[i] * pow(2, SPDZ_FIXED_PRECISION)));
+        //cout << "long_shares[i] = " << long_shares[i] << endl;
     }
 
     // step 2: convert to the gfp value and call send_private_inputs
@@ -133,7 +152,7 @@ void send_private_batch_shares(std::vector<float> shares, std::vector<int>& sock
 
     // Run the computation
     send_private_inputs(input_values_gfp, sockets, n_parties);
-    cout << "Sent private inputs to each SPDZ engine, waiting for result..." << endl;
+    // cout << "Sent private inputs to each SPDZ engine, waiting for result..." << endl;
 }
 
 void initialise_fields(const string& dir_prefix)
@@ -155,10 +174,28 @@ void initialise_fields(const string& dir_prefix)
     gf2n::init_field(lg2);
 }
 
-
-std::vector<float> receive_result(std::vector<int>& sockets, int n_parties, int size)
+// deprecated
+int receive_index(std::vector<int>& sockets)
 {
-    cout << "Receive result from the SPDZ engine" <<endl;
+    cout << "Receive best split index from the SPDZ engines" <<endl;
+
+    octetStream os;
+    os.reset_write_head();
+    os.Receive(sockets[0]);
+
+    gfp aa;
+    aa.unpack(os);
+    bigint index;
+    to_signed_bigint(index, aa);
+    int best_split_index = index.get_si();
+
+    return best_split_index;
+}
+
+
+std::vector<float> receive_result(std::vector<int>& sockets, int n_parties, int size, int & best_split_index)
+{
+    cout << "Receive result from the SPDZ engine" << endl;
     std::vector<gfp> output_values(size);
     octetStream os;
     for (int i = 0; i < n_parties; i++)
@@ -173,9 +210,9 @@ std::vector<float> receive_result(std::vector<int>& sockets, int n_parties, int 
         }
     }
 
-    std::vector<float> res_shares(size);
+    std::vector<float> res_shares(size - 1);
 
-    for (int i = 0; i < size; i++) {
+    for (int i = 0; i < size - 1; i++) {
         gfp val = output_values[i];
         bigint aa;
         to_signed_bigint(aa, val);
@@ -183,6 +220,11 @@ std::vector<float> receive_result(std::vector<int>& sockets, int n_parties, int 
         //cout<< "i = " << i << ", t = " << t <<endl;
         res_shares[i] = static_cast<float>(t * pow(2, -SPDZ_FIXED_PRECISION));
     }
+
+    gfp index = output_values[size - 1];
+    bigint index_aa;
+    to_signed_bigint(index_aa, index);
+    best_split_index = index_aa.get_si();
 
     return res_shares;
 }
@@ -192,7 +234,7 @@ int main(int argc, char** argv)
 {
     int my_client_id;
     int nparties;
-    int port_base = 14000;
+    int port_base = 18000;
     string host_name = "localhost";
 
     if (argc < 3) {
@@ -216,38 +258,81 @@ int main(int argc, char** argv)
 
     cout<<"Begin setup sockets"<<endl;
 
-    for (int i = 0; i < 10; i++) {
+    for (int xx = 0; xx < 10; xx++) {
 
-        cout <<" ****** iteration " << i << "******" << endl;
+        cout << "iteration xx = " << xx << endl;
 
         // Setup connections from this client to each party socket
         vector<int> sockets = setup_sockets(nparties, my_client_id, host_name, port_base);
+
         cout << "Finish setup socket connections to SPDZ engines." << endl;
 
-        // Map inputs into gfp
-        int size = 50;
-        vector<float> shares(size);
-        for (int i = 0; i < size; i++) {
-            shares[i] = my_client_id * 0.1 + i * (-0.1) + 0.0;
-            //cout << shares[i] << endl;
+        int type = 0;
+        int global_split_num = 10;
+        int classes_num = 2;
+
+        if (my_client_id == 0) {
+            send_public_parameters(type, global_split_num, classes_num, sockets, nparties);
+            cout << "Finish send public parameters to SPDZ engines." << endl;
         }
 
-        cout << "Finish prepare secret shares " << endl;
-
-        // Run the commputation
-        send_private_batch_shares(shares,sockets,nparties);
-
-        // Get the result back (client_id of winning client)
-        vector<float> result = receive_result(sockets, nparties, size);
-
-        cout << "result = ";
-        for (int i = 0; i < size; i++) {
-            cout << result[i] << ",";
+        cout << "Ready to send private statistics" << endl;
+        vector< vector<float> > statistics;
+        for (int i = 0; i < global_split_num; i++) {
+            vector<float> tmp;
+            for (int j = 0; j < classes_num * 2; j++) {
+                tmp.push_back(my_client_id * 0.1 + (i + 1) * 0.01 + (j + 1) * 0.005);
+            }
+            statistics.push_back(tmp);
         }
-        cout << endl;
 
-        for (unsigned int i = 0; i < sockets.size(); i++)
+        for (int i = 0; i < global_split_num; i++) {
+            for (int j = 0; j < classes_num * 2; j++) {
+                vector<float> x;
+                x.push_back(statistics[i][j]);
+                //cout << "statistics["<< i << "][" << j << "] = "<< statistics[i][j] << endl;
+                send_private_batch_shares(x, sockets, nparties);
+            }
+        }
+
+        cout << "Ready to send private left sums" << endl;
+        vector<int> left_nums;
+        for (int i = 0; i < global_split_num; i++) {
+            left_nums.push_back(i+1);
+            //cout << "left_nums[" << i << "] = " << left_nums[i] << endl;
+        }
+
+        for (int i = 0; i < global_split_num; i++) {
+            vector<gfp> input_values_gfp(1);
+            input_values_gfp[0].assign(left_nums[i]);
+            send_private_inputs(input_values_gfp, sockets, nparties);
+        }
+
+        cout << "Ready to send private right sums" << endl;
+        vector<int> right_nums;
+        for (int i = 0; i < global_split_num; i++) {
+            right_nums.push_back((i+1) * 2);
+        }
+
+        for (int i = 0; i < global_split_num; i++) {
+            vector<gfp> input_values_gfp(1);
+            input_values_gfp[0].assign(right_nums[i]);
+            send_private_inputs(input_values_gfp, sockets, nparties);
+        }
+
+        cout << "Ready to receive result from the SPDZ engines" << endl;
+
+        int best_split_index;
+        //int best_split_index = receive_index(sockets);
+
+        vector<float> impurities = receive_result(sockets, nparties, 3, best_split_index);
+        cout << "Received: best_split_index = " << best_split_index << endl;
+        cout << "Received: left_impurity = " << impurities[0] << endl;
+        cout << "Received: right_impurity = " << impurities[1] << endl;
+
+        for (unsigned int i = 0; i < sockets.size(); i++) {
             close_client_socket(sockets[i]);
+        }
     }
 
     return 0;
