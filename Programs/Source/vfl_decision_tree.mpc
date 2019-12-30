@@ -37,7 +37,7 @@ PORT_NUM = 18000
 MAX_NUM_CLIENTS = 3
 MAX_GLOBAL_SPLIT_NUM = 1000
 MAX_CLASSES_NUM = 16
-
+OVERFLOW_THRESHOLD = 0.0001
 
 # accept a client's connection
 def accept_client():
@@ -115,6 +115,10 @@ def compute_gini(clients_statistics, clients_left_nums, clients_right_nums, glob
         #print_ln('left_sum[%s] = %s', i, left_sum[0].reveal())
         #print_ln('right_sum[%s] = %s', i, right_sum[0].reveal())
 
+        #@if_(right_sum[0].reveal() == 0)
+        #def _():
+        #    print_ln('This is an overflow number, right_sum[%s] = %s', i, right_sum[0].reveal())
+
         # compute probabilities of each class
         @for_range(classes_num * 2)
         def _(j):
@@ -127,9 +131,10 @@ def compute_gini(clients_statistics, clients_left_nums, clients_right_nums, glob
                 #print_ln('left_probs[%s] = %s', x, left_probs[x].reveal())
             @else_
             def _():
+                #print_ln('clients_statistics[%s][%s] = %s', i, j, clients_statistics[i][j].reveal())
+                #print_ln('right_sum[0] = %s', right_sum[0].reveal())
                 right_probs[x] = clients_statistics[i][j] / right_sum[0]
                 #print_ln('right_probs[%s] = %s', x, right_probs[x].reveal())
-
 
         # compute left and right impurity
         @for_range(classes_num)
@@ -143,7 +148,6 @@ def compute_gini(clients_statistics, clients_left_nums, clients_right_nums, glob
         #print_ln('splits_impurity[%s][0] = %s', i, splits_impurity[i][0].reveal())
         #print_ln('splits_impurity[%s][1] = %s', i, splits_impurity[i][1].reveal())
         #print_ln('splits_impurity[%s][2] = %s', i, splits_impurity[i][2].reveal())
-
 
     return splits_impurity
 
@@ -238,7 +242,7 @@ def write_result_to_clients(sockets, number_clients, best_split_index, best_left
             print_ln('sint_result_matrix[%s][%s] = %s', i, j, sint_result_matrix[i][j].reveal())
     """
 
-    print_ln('begin to write shares to each client')
+    #print_ln('begin to write shares to each client')
     @for_range(number_clients)
     def loop_body(i):
         #print_ln('socket[%s] = %s', i, sockets[i])
@@ -285,7 +289,7 @@ def main():
         print_ln('Finish step 1')
 
         # step 2: Receive parameters for further computation
-        print_ln('client_sockets[0] = %s', client_sockets[0])
+        #print_ln('client_sockets[0] = %s', client_sockets[0])
         type, global_split_num, classes_num = client_public_parameters(client_sockets[0])
         print_ln('type = %s', type)
         print_ln('global_split_num = %s', global_split_num)
@@ -307,6 +311,16 @@ def main():
                 def _(j):
                     clients_statistics[i][j] = clients_statistics[i][j] + input_statistics[i][j]
                     #print_ln('clients_statistics[%s][%s] = %s', i, j, clients_statistics[i][j].reveal())
+
+        # truncate the overflow values around 0
+        @for_range(global_split_num)
+        def _(i):
+            @for_range(classes_num * 2)
+            def _(j):
+                @if_(mpc_math.abs_fx(clients_statistics[i][j]).reveal() < OVERFLOW_THRESHOLD)
+                def _():
+                    clients_statistics[i][j] = 0
+
 
         print_ln('Finish step 3')
 
