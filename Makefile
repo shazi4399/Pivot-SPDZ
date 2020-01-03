@@ -137,6 +137,9 @@ vfl-logistic-func-test.x: ExternalIO/vfl-logistic-func-test.cpp $(COMMON)
 vfl-decision-tree-test.x: ExternalIO/vfl-decision-tree-test.cpp $(COMMON)
 	$(CXX) $(CFLAGS) -o $@ $^ $(LDLIBS)
 
+spdz-decision-tree-test.x: ExternalIO/spdz-decision-tree-test.cpp $(COMMON)
+	$(CXX) $(CFLAGS) -o $@ $^ $(LDLIBS)
+
 lib: $(LIB)
 
 $(LIB): $(COMMON)
