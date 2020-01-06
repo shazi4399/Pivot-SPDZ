@@ -158,7 +158,7 @@ def predict():
                 # fetch the feature threshold value and the feature value
                 feature_value = testing_data[i][j]
                 threshold_value = tree_nodes_values[j]
-                print_ln('j = %s, feature_value = %s, threshold_value = %s', j, feature_value.reveal(), tree_nodes_values[j].reveal())
+                #print_ln('j = %s, feature_value = %s, threshold_value = %s', j, feature_value.reveal(), tree_nodes_values[j].reveal())
                 @if_e((feature_value <= threshold_value).reveal() == 1)
                 def _():
                     tmp_prediction_array[2 * j + 1] = tmp_prediction_array[j] * 1.0
