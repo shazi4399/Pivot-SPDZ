@@ -142,6 +142,14 @@ def compute_gini(clients_statistics, clients_left_nums, clients_right_nums, glob
             left_impurity[0] = left_impurity[0] - (left_probs[j] * left_probs[j])
             right_impurity[0] = right_impurity[0] - (right_probs[j] * right_probs[j])
 
+        @if_(mpc_math.abs_fx(left_impurity[0]).reveal() < OVERFLOW_THRESHOLD)
+        def _():
+            left_impurity[0] = 0
+
+        @if_(mpc_math.abs_fx(right_impurity[0]).reveal() < OVERFLOW_THRESHOLD)
+        def _():
+            right_impurity[0] = 0
+
         splits_impurity[i][0] = left_impurity[0] + right_impurity[0]
         splits_impurity[i][1] = left_impurity[0]
         splits_impurity[i][2] = right_impurity[0]
@@ -162,6 +170,15 @@ def compute_variance(clients_statistics, clients_left_nums, clients_right_nums, 
         right_variance = sfix(0.0)
         left_variance = (clients_statistics[i][2] / clients_left_nums[i]) - (clients_statistics[i][0] / clients_left_nums[i]) ** 2
         right_variance = (clients_statistics[i][3] / clients_right_nums[i]) - (clients_statistics[i][1] / clients_right_nums[i]) ** 2
+
+        @if_(mpc_math.abs_fx(left_variance).reveal() < OVERFLOW_THRESHOLD)
+        def _():
+            left_variance = 0
+
+        @if_(mpc_math.abs_fx(right_variance).reveal() < OVERFLOW_THRESHOLD)
+        def _():
+            right_variance = 0
+
         splits_impurity[i][0] = left_variance + right_variance
         splits_impurity[i][1] = left_variance
         splits_impurity[i][2] = right_variance
