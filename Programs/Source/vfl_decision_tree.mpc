@@ -112,8 +112,8 @@ def compute_gini(clients_statistics, clients_left_nums, clients_right_nums, glob
             def _():
                 right_sum[0] = right_sum[0] + clients_statistics[i][j]
 
-        #print_ln('left_sum[%s] = %s', i, left_sum[0].reveal())
-        #print_ln('right_sum[%s] = %s', i, right_sum[0].reveal())
+        print_ln('left_sum[%s] = %s, right_sum[%s] = %s', i, left_sum[0].reveal(), i, right_sum[0].reveal())
+        print_ln('clients_left_nums[%s] = %s, clients_right_nums[%s] = %s', i, clients_left_nums[i].reveal(), i, clients_right_nums[i].reveal())
 
         #@if_(right_sum[0].reveal() == 0)
         #def _():
@@ -125,16 +125,16 @@ def compute_gini(clients_statistics, clients_left_nums, clients_right_nums, glob
             x = j / 2
             @if_e(j % 2 == 0)
             def _():
-                #print_ln('clients_statistics[%s][%s] = %s', i, j, clients_statistics[i][j].reveal())
+                print_ln('clients_statistics[%s][%s] = %s', i, j, clients_statistics[i][j].reveal())
                 #print_ln('left_sum[0] = %s', left_sum[0].reveal())
                 left_probs[x] = clients_statistics[i][j] / left_sum[0]
-                #print_ln('left_probs[%s] = %s', x, left_probs[x].reveal())
+                print_ln('left_probs[%s] = %s', x, left_probs[x].reveal())
             @else_
             def _():
-                #print_ln('clients_statistics[%s][%s] = %s', i, j, clients_statistics[i][j].reveal())
+                print_ln('clients_statistics[%s][%s] = %s', i, j, clients_statistics[i][j].reveal())
                 #print_ln('right_sum[0] = %s', right_sum[0].reveal())
                 right_probs[x] = clients_statistics[i][j] / right_sum[0]
-                #print_ln('right_probs[%s] = %s', x, right_probs[x].reveal())
+                print_ln('right_probs[%s] = %s', x, right_probs[x].reveal())
 
         # compute left and right impurity
         @for_range(classes_num)
@@ -296,6 +296,16 @@ def main():
         print_ln('classes_num = %s', classes_num)
         print_ln('Finish step 2')
 
+        # init the values, otherwise there is problem
+        @for_range(global_split_num)
+        def _(i):
+            clients_left_nums[i] = 0
+            clients_right_nums[i] = 0
+            @for_range(classes_num * 2)
+            def _(j):
+                clients_statistics[i][j] = 0
+
+
         # step 3: Receive and aggregate the clients input values
         @for_range(MAX_NUM_CLIENTS)
         def _(client_id):
@@ -305,6 +315,8 @@ def main():
             def _(i):
                 clients_left_nums[i] = clients_left_nums[i] + input_left_nums[i]
                 clients_right_nums[i] = clients_right_nums[i] + input_right_nums[i]
+                #print_ln('input_left_nums[%s] = %s', i, input_left_nums[i].reveal())
+                #print_ln('input_right_nums[%s] = %s', i, input_right_nums[i].reveal())
                 #print_ln('clients_left_nums[%s] = %s', i, clients_left_nums[i].reveal())
                 #print_ln('clients_right_nums[%s] = %s', i, clients_right_nums[i].reveal())
                 @for_range(classes_num * 2)

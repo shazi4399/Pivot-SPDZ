@@ -1,0 +1,284 @@
+# coding: latin-1
+"""
+  Provide decision tree MPC computation for CollaborativeML
+
+  Keep waiting enough clients connected to this program. Once enough clients connected, read the input values and compute the
+  logistic function, and return the gfp results (in the secret shared form) to the clients.
+
+  This program does in three steps:
+  (1) keep waiting enough clients MAX_NUM_CLIENTS connect, read the input values;
+  (2) compute the gini impurity or label variance using the secret shares;
+  (3) save as secret shares before returning the clients;
+
+  Note each client connects in a single thread and so is potentially blocked.
+
+  Each round / game will reset and so this runs indefinitiely.
+"""
+
+from Compiler.types import sint, regint, Array, MemValue
+from Compiler.instructions import listen, acceptclientconnection
+from Compiler.library import print_ln, do_while, for_range
+from Compiler.util import if_else
+from Compiler import mpc_math, floatingpoint
+from random import seed, randrange
+from Compiler.program import Program
+import ml
+
+MAX_NBITS = 14
+NULL = -2147483648
+
+FIXED_F = 16
+FIXED_K = 31
+sfix.set_precision(FIXED_F, FIXED_K)
+cfix.set_precision(FIXED_F, FIXED_K)
+
+PORT_NUM = 19000
+MAX_NUM_CLIENTS = 3
+MAX_TREE_DEPTH = 3
+TREE_NODE_NUM = 15  # 2^(MAX_TREE_DEPTH + 1) - 1
+TESTING_NUM = 71
+OVERFLOW_THRESHOLD = 0.0001
+
+leaf_num = Array(1, cint)
+label_nodes = Array(TREE_NODE_NUM, cint)
+label_vector = Array(TREE_NODE_NUM, sfix)
+client_features = Array(MAX_NUM_CLIENTS, cint)
+self_internal_nodes = cint.Matrix(MAX_NUM_CLIENTS, TREE_NODE_NUM)
+#internal_thresholds = Array(TREE_NODE_NUM, sfix)
+testing_data = sfix.Matrix(TESTING_NUM, TREE_NODE_NUM)
+
+clients_label_shares = sfix.Matrix(MAX_NUM_CLIENTS, TREE_NODE_NUM)
+
+tree_nodes = Array(TREE_NODE_NUM, cint) # -1: no meaning, 0: internal node, 1: leaf node
+tree_nodes_values = Array(TREE_NODE_NUM, sfix) # -1: no meaning, 0: threshold values, 1: label value
+
+@for_range(TREE_NODE_NUM)
+def _(i):
+    tree_nodes[i] = -1
+    tree_node_values = -1
+
+# accept a client's connection
+def accept_client():
+    client_socket_id = regint()
+    acceptclientconnection(client_socket_id, PORT_NUM)
+    return client_socket_id
+
+
+# receive client 0's leaf_num
+def client_leaf_num(client_socket_id):
+    leaf_num[0] = cint.read_from_socket(client_socket_id, 1)
+    #print_ln('read leaf num from client 0 = %s', leaf_num[0])
+    return True
+
+# receive client 0's label nodes
+def client_label_nodes(client_socket_id):
+    @for_range(leaf_num[0])
+    def _(i):
+        label_nodes[i] = cint.read_from_socket(client_socket_id, 1)
+        #print_ln('label_nodes[%s] = %s', i, label_nodes[i])
+        tree_nodes[label_nodes[i]] = 1
+        tree_nodes_values[label_nodes[i]] = 0
+    return True
+
+# receive all clients private label shares
+def client_label_shares(client_socket_id):
+    tmp_array = Array(1, sint)
+    @for_range(leaf_num[0])
+    def _(j):
+        tmp_array = sint.receive_from_client(1, client_socket_id)
+        clients_label_shares[client_socket_id][j] = sfix._new(tmp_array[0])
+    return True
+
+# aggregate label shares and set tree_node_values
+def aggregate_label_shares():
+    @for_range(MAX_NUM_CLIENTS)
+    def _(i):
+        @for_range(leaf_num[0])
+        def _(j):
+            tree_nodes_values[label_nodes[j]] = tree_nodes_values[label_nodes[j]] + clients_label_shares[i][j]
+            label_vector[j] = tree_nodes_values[label_nodes[j]] # save for future use
+    return True
+
+# receive all clients self_feature_num
+def client_self_feature_num(client_socket_id):
+    client_features[client_socket_id] = cint.read_from_socket(client_socket_id, 1)
+    return True
+
+# receive all clients feature nodes
+def client_self_feature_nodes(client_socket_id):
+    tmp_array = Array(1, cint)
+    @for_range(client_features[client_socket_id])
+    def _(i):
+        tmp_array = cint.read_from_socket(client_socket_id, 1)
+        self_internal_nodes[client_socket_id][i] = tmp_array[0]
+    return True
+
+# receive all clients self threshold values
+def client_self_feature_thresholds(client_socket_id):
+    tmp_array = Array(1, sint)
+    @for_range(client_features[client_socket_id])
+    def _(i):
+        tmp_array = sint.receive_from_client(1, client_socket_id)
+        tree_node_index = self_internal_nodes[client_socket_id][i]
+        tree_nodes[tree_node_index] = 0 # mark as internal node
+        tree_nodes_values[tree_node_index] = sfix._new(tmp_array[0])
+    return True
+
+# receive all clients' private testing data and set to corresponding position
+def client_testing_data(client_socket_id):
+    tmp_array = Array(1, sint)
+    @for_range(TESTING_NUM)
+    def _(i):
+        @for_range(client_features[client_socket_id])
+        def _(j):
+            tmp_array = sint.receive_from_client(1, client_socket_id)
+            node_index = self_internal_nodes[client_socket_id][j]
+            testing_data[i][node_index] = sfix._new(tmp_array[0])
+    return True
+
+# compute the predicted labels given the testing dataset
+def predict():
+    #@for_range(leaf_num[0])
+    #def _(i):
+    #    print_ln('label_vector[%s] = %s', i, label_vector[i].reveal())
+    #    print_ln('label_nodes[%s] = %s', i, label_nodes[i].reveal())
+
+    predicted_labels = Array(TESTING_NUM, sfix)
+    @for_range(TESTING_NUM)
+    def _(i):
+        # compute predicted label for each sample
+        tmp_prediction_array = Array(TREE_NODE_NUM, sfix)
+        @for_range(TREE_NODE_NUM)
+        def _(j):
+            tmp_prediction_array[j] = 1
+        @for_range(TREE_NODE_NUM)
+        def _(j):
+            @if_(tree_nodes[j] == 0)
+            def _():
+                # fetch the feature threshold value and the feature value
+                feature_value = testing_data[i][j]
+                threshold_value = tree_nodes_values[j]
+                print_ln('j = %s, feature_value = %s, threshold_value = %s', j, feature_value.reveal(), tree_nodes_values[j].reveal())
+                @if_e((feature_value <= threshold_value).reveal() == 1)
+                def _():
+                    tmp_prediction_array[2 * j + 1] = tmp_prediction_array[j] * 1.0
+                    tmp_prediction_array[2 * j + 2] = tmp_prediction_array[j] * 0
+                @else_
+                def _():
+                    tmp_prediction_array[2 * j + 1] = tmp_prediction_array[j] * 0
+                    tmp_prediction_array[2 * j + 2] = tmp_prediction_array[j] * 1.0
+
+        leaf_binary_vector = Array(TREE_NODE_NUM, sfix)
+        leaf_index = Array(1, cint)
+        leaf_index[0] = 0
+        @for_range(TREE_NODE_NUM)
+        def _(j):
+            @if_(tree_nodes[j] == 1)
+            def _():
+                leaf_binary_vector[leaf_index[0]] = tmp_prediction_array[j]
+                leaf_index[0] = leaf_index[0] + 1
+
+        #@for_range(leaf_num[0])
+        #def _(k):
+        #    print_ln('leaf_binary_vector[%s] = %s', k, leaf_binary_vector[k].reveal())
+
+        # compute dot product
+        prediction = Array(1, sfix)
+        prediction[0] = 0
+        @for_range(leaf_num[0])
+        def _(k):
+            prediction[0] = prediction[0] + label_vector[k] * leaf_binary_vector[k]
+
+        predicted_labels[i] = prediction[0]
+        print_ln('predicted_labels[%s] = %s', i, predicted_labels[i].reveal())
+    return predicted_labels
+
+# write result to all the clients
+def write_result_to_clients(sockets, client_socket_id, predicted_labels):
+
+    # Send predicted_labels to the super client.
+    sint_predicted_labels = Array(TESTING_NUM, sint)
+    @for_range(TESTING_NUM)
+    def _(i):
+        sint_predicted_labels[i] = predicted_labels[i].v
+
+    print_ln('write shares to the super client')
+    sint.write_shares_to_socket(sockets[client_socket_id], sint_predicted_labels)
+
+
+def main():
+    """Listen in while loop for clients to join a game.
+    Once maximum reached or have notified that round finished, run comparison and return result."""
+    # Start listening for client socket connections
+    listen(PORT_NUM)
+    print_ln('Listening for client connections on base port %s', PORT_NUM)
+
+    @do_while
+    def computing_loop():
+
+        print_ln('Starting a new recursive node.')
+
+        # Clients socket id (integer).
+        client_sockets = Array(MAX_NUM_CLIENTS, regint)
+        # Number of clients
+        number_clients = MemValue(regint(0))
+        # Keep track of received inputs
+        seen = Array(MAX_NUM_CLIENTS, regint)
+        seen.assign_all(0)
+
+        # step 1: Loop round waiting for each client to connect
+        @do_while
+        def client_connections():
+            client_id = accept_client()
+            @if_(client_id >= MAX_NUM_CLIENTS)
+            def _():
+                print_ln('client id too high')
+                crash()
+            client_sockets[client_id] = client_id
+            seen[client_id] = 1
+            return sum(seen) < MAX_NUM_CLIENTS
+
+        print_ln('Finish step 1')
+
+        # step 2: Receive label information from the super client
+        #print_ln('client_sockets[0] = %s', client_sockets[0])
+        client_leaf_num(client_sockets[0])
+        client_label_nodes(client_sockets[0])
+        #print_ln('leaf_num = %s', leaf_num[0])
+        @for_range(MAX_NUM_CLIENTS)
+        def _(i):
+            client_label_shares(client_sockets[i])
+        aggregate_label_shares()
+
+        print_ln('Finish step 2')
+
+        # step 3: Receive self feature information from all the clients
+        @for_range(MAX_NUM_CLIENTS)
+        def _(i):
+            client_self_feature_num(client_sockets[i])
+            client_self_feature_nodes(client_sockets[i])
+            client_self_feature_thresholds(client_sockets[i])
+
+        print_ln('Finish step 3')
+
+        # step 4: Receive testing data from each client
+        @for_range(MAX_NUM_CLIENTS)
+        def _(i):
+            client_testing_data(client_sockets[i])
+
+        print_ln('Finish step 4')
+
+        # step 5: Predict for each sample in the testing data
+        predicted_labels = Array(TESTING_NUM, sfix)
+        predicted_labels = predict()
+
+        print_ln('Finish step 5')
+
+        # step 6: Organize the result and send back to the super client
+        write_result_to_clients(client_sockets, client_sockets[0], predicted_labels)
+
+        print_ln('Finish step 6')
+
+        return True
+
+main()
