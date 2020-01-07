@@ -35,7 +35,7 @@ cfix.set_precision(FIXED_F, FIXED_K)
 
 PORT_NUM = 18000
 MAX_NUM_CLIENTS = 3
-MAX_GLOBAL_SPLIT_NUM = 1000
+MAX_GLOBAL_SPLIT_NUM = 5000
 MAX_CLASSES_NUM = 16
 OVERFLOW_THRESHOLD = 0.0001
 
@@ -102,6 +102,7 @@ def compute_gini(clients_statistics, clients_left_nums, clients_right_nums, glob
         left_impurity[0] = 1.0
         right_impurity[0] = 1.0
 
+
         # compute the sum of left and right branches
         @for_range(classes_num * 2)
         def _(j):
@@ -142,6 +143,14 @@ def compute_gini(clients_statistics, clients_left_nums, clients_right_nums, glob
             left_impurity[0] = left_impurity[0] - (left_probs[j] * left_probs[j])
             right_impurity[0] = right_impurity[0] - (right_probs[j] * right_probs[j])
 
+        # add weighted impurity on 2020/01/07
+        print_ln('left_impurity[0] before weighted = %s', left_impurity[0].reveal())
+        print_ln('right_impurity[0] before weighed = %s', right_impurity[0].reveal())
+        left_impurity[0] = (left_impurity[0] * clients_left_nums[i]) / (clients_left_nums[i] + clients_right_nums[i])
+        right_impurity[0] = (right_impurity[0] * clients_right_nums[i]) / (clients_left_nums[i] + clients_right_nums[i])
+        print_ln('left_impurity[0] after weighted = %s', left_impurity[0].reveal())
+        print_ln('right_impurity[0] after weighed = %s', right_impurity[0].reveal())
+
         @if_(mpc_math.abs_fx(left_impurity[0]).reveal() < OVERFLOW_THRESHOLD)
         def _():
             left_impurity[0] = 0
@@ -164,24 +173,30 @@ def compute_variance(clients_statistics, clients_left_nums, clients_right_nums, 
 
     splits_impurity = sfix.Matrix(MAX_GLOBAL_SPLIT_NUM, 3)
 
+    left_variance = Array(1, sfix)
+    right_variance = Array(1, sfix)
+
     @for_range(global_split_num)
     def _(i):
-        left_variance = sfix(0.0)
-        right_variance = sfix(0.0)
-        left_variance = (clients_statistics[i][2] / clients_left_nums[i]) - (clients_statistics[i][0] / clients_left_nums[i]) ** 2
-        right_variance = (clients_statistics[i][3] / clients_right_nums[i]) - (clients_statistics[i][1] / clients_right_nums[i]) ** 2
+        left_variance[0] = 0.0
+        right_variance[0] = 0.0
+        left_variance[0] = (clients_statistics[i][2] / clients_left_nums[i]) - (clients_statistics[i][0] / clients_left_nums[i]) ** 2
+        right_variance[0] = (clients_statistics[i][3] / clients_right_nums[i]) - (clients_statistics[i][1] / clients_right_nums[i]) ** 2
 
-        @if_(mpc_math.abs_fx(left_variance).reveal() < OVERFLOW_THRESHOLD)
+        left_variance[0] = (left_variance[0] * clients_left_nums[i]) / (clients_left_nums[i] + clients_right_nums[i])
+        right_variance[0] = (right_variance[0] * clients_right_nums[i]) / (clients_left_nums[i] + clients_right_nums[i])
+
+        @if_(mpc_math.abs_fx(left_variance[0]).reveal() < OVERFLOW_THRESHOLD)
         def _():
-            left_variance = 0
+            left_variance[0] = 0
 
-        @if_(mpc_math.abs_fx(right_variance).reveal() < OVERFLOW_THRESHOLD)
+        @if_(mpc_math.abs_fx(right_variance[0]).reveal() < OVERFLOW_THRESHOLD)
         def _():
-            right_variance = 0
+            right_variance[0] = 0
 
-        splits_impurity[i][0] = left_variance + right_variance
-        splits_impurity[i][1] = left_variance
-        splits_impurity[i][2] = right_variance
+        splits_impurity[i][0] = left_variance[0] + right_variance[0]
+        splits_impurity[i][1] = left_variance[0]
+        splits_impurity[i][2] = right_variance[0]
 
     return splits_impurity
 
