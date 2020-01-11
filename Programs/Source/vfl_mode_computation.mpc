@@ -1,0 +1,171 @@
+# coding: latin-1
+"""
+  Provide mode computation for the CollaborativeML
+
+  Keep waiting enough clients connected to this program. Once enough clients connected, read the input values and compute the
+  logistic function, and return the gfp results (in the secret shared form) to the clients.
+
+  This program does in three steps:
+  (1) keep waiting enough clients MAX_NUM_CLIENTS connect, read the input values;
+  (2) compute mode using the secret shares;
+  (3) return to the clients;
+
+  Note each client connects in a single thread and so is potentially blocked.
+
+  Each round / game will reset and so this runs indefinitiely.
+"""
+
+from Compiler.types import sint, regint, Array, MemValue
+from Compiler.instructions import listen, acceptclientconnection
+from Compiler.library import print_ln, do_while, for_range
+from Compiler.util import if_else
+from Compiler import mpc_math, floatingpoint
+from random import seed, randrange
+from Compiler.program import Program
+import ml
+
+ARRAY_SIZE = 50
+MAX_NBITS = 14
+NULL = -2147483648
+
+FIXED_F = 16
+FIXED_K = 31
+sfix.set_precision(FIXED_F, FIXED_K)
+cfix.set_precision(FIXED_F, FIXED_K)
+
+PORT_NUM = 20000
+MAX_NUM_CLIENTS = 3
+VECTOR_SIZE = 5
+OVERFLOW_THRESHOLD = 0.001
+CLASS_NUM = 3
+
+# accept a client's connection
+def accept_client():
+    client_socket_id = regint()
+    acceptclientconnection(client_socket_id, PORT_NUM)
+    return client_socket_id
+
+
+# receive a client's private inputs
+def client_input(client_socket_id):
+
+    input_values = Array(VECTOR_SIZE, sfix)
+    tmp_array = Array(1, sint)
+
+    @for_range(VECTOR_SIZE)
+    def _(i):
+        tmp_array = sint.receive_from_client(1, client_socket_id)
+        input_values[i] = sfix._new(tmp_array[0])
+
+    return input_values
+
+# find mode
+def find_mode(clients_inputs):
+
+    class_counts = Array(CLASS_NUM, sint)
+    @for_range(CLASS_NUM)
+    def _(i):
+        class_counts[i] = 0
+
+    @for_range(VECTOR_SIZE)
+    def _(i):
+        @for_range(CLASS_NUM)
+        def _(j):
+            @if_(mpc_math.abs_fx(clients_inputs[i] - j).reveal() < OVERFLOW_THRESHOLD)
+            def _():
+                class_counts[j] = class_counts[j] + 1
+
+    majority = Array(1, sfix)
+    majority[0] = -1
+
+    @for_range(CLASS_NUM)
+    def _(i):
+        is_new_max = majority[0] < class_counts[i]
+        @if_((is_new_max == 1).reveal())
+        def _():
+            majority[0] = i
+
+    return majority
+
+
+# write result to all the clients, where best_split_index is public while best_left_impurity and best_right_impurity are private
+def write_result_to_clients(sockets, number_clients, mode):
+
+    #print_ln('begin to write shares to each client')
+    @for_range(number_clients)
+    def loop_body(i):
+        #print_ln('socket[%s] = %s', i, sockets[i])
+        sint.write_shares_to_socket(sockets[i], mode.v)
+
+
+def main():
+    """Listen in while loop for clients to join a game.
+    Once maximum reached or have notified that round finished, run comparison and return result."""
+    # Start listening for client socket connections
+    listen(PORT_NUM)
+    print_ln('Listening for client connections on base port %s', PORT_NUM)
+
+    @do_while
+    def computing_loop():
+
+        print_ln('Starting a new recursive node.')
+
+        # Clients socket id (integer).
+        client_sockets = Array(MAX_NUM_CLIENTS, regint)
+        # Number of clients
+        number_clients = MemValue(regint(0))
+        # Keep track of received inputs
+        seen = Array(MAX_NUM_CLIENTS, regint)
+        seen.assign_all(0)
+
+        # step 1: Loop round waiting for each client to connect
+        @do_while
+        def client_connections():
+            client_id = accept_client()
+            @if_(client_id >= MAX_NUM_CLIENTS)
+            def _():
+                print_ln('client id too high')
+                crash()
+            client_sockets[client_id] = client_id
+            seen[client_id] = 1
+            return sum(seen) < MAX_NUM_CLIENTS
+
+        # client secret inputs
+        clients_inputs = Array(VECTOR_SIZE, sfix)
+        @for_range(VECTOR_SIZE)
+        def _(i):
+            clients_inputs[i] = 0
+
+        print_ln('Finish step 1')
+
+        # step 2: Receive parameters for further computation
+        @for_range(MAX_NUM_CLIENTS)
+        def _(client_id):
+            input_values = client_input(client_id)
+            # aggregate into clients_inputs
+            @for_range(VECTOR_SIZE)
+            def _(i):
+                clients_inputs[i] = clients_inputs[i] + input_values[i]
+
+        # truncate the overflow values around 0
+        @for_range(VECTOR_SIZE)
+        def _(i):
+            @if_(mpc_math.abs_fx(clients_inputs[i]).reveal() < OVERFLOW_THRESHOLD)
+            def _():
+                clients_inputs[i] = 0
+
+        print_ln('Finish step 2')
+
+        # step 3: Compute the mode
+        mode = Array(1, sint)
+        mode = find_mode(clients_inputs)
+        print_ln('Finish step 3')
+
+        # step 4: Organize the result and send back to the clients
+        write_result_to_clients(client_sockets, MAX_NUM_CLIENTS, mode[0])
+        print_ln('mode = %s', mode[0].reveal())
+        print_ln('Finish step 4')
+
+        return True
+
+main()

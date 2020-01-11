@@ -38,6 +38,23 @@ MAX_NUM_CLIENTS = 3
 MAX_GLOBAL_SPLIT_NUM = 5000
 MAX_CLASSES_NUM = 16
 OVERFLOW_THRESHOLD = 0.0001
+MAX_PACKING_CAPACITY = 6
+RADIX_FOR_PACKING = 2000
+EXP2_16 = 65536
+
+packing_flag = Array(1, cint)
+packing_flag[0] = 0  # default no packing
+
+radix_vector = Array(MAX_PACKING_CAPACITY, regint)
+@for_range(MAX_PACKING_CAPACITY)
+def _(i):
+    @if_e(i == 0)
+    def _():
+        radix_vector[i] = RADIX_FOR_PACKING
+    @else_
+    def _():
+        radix_vector[i] = radix_vector[i-1] * RADIX_FOR_PACKING
+
 
 # accept a client's connection
 def accept_client():
@@ -102,7 +119,6 @@ def compute_gini(clients_statistics, clients_left_nums, clients_right_nums, glob
         left_impurity[0] = 1.0
         right_impurity[0] = 1.0
 
-
         # compute the sum of left and right branches
         @for_range(classes_num * 2)
         def _(j):
@@ -124,6 +140,7 @@ def compute_gini(clients_statistics, clients_left_nums, clients_right_nums, glob
         @for_range(classes_num * 2)
         def _(j):
             x = j / 2
+            #print_ln('x = %s', x)
             @if_e(j % 2 == 0)
             def _():
                 #print_ln('clients_statistics[%s][%s] = %s', i, j, clients_statistics[i][j].reveal())
@@ -281,6 +298,82 @@ def write_result_to_clients(sockets, number_clients, best_split_index, best_left
         sint.write_shares_to_socket(sockets[i], sint_result_matrix[i])
 
 
+def unpacking(clients_statistics, classes_num, used_classes_num, global_split_num):
+    clients_statistics_new = sfix.Matrix(MAX_GLOBAL_SPLIT_NUM, MAX_CLASSES_NUM * 2)
+    @for_range(global_split_num)
+    def _(i):
+        @for_range(classes_num * 2)
+        def _(j):
+            clients_statistics_new[i][j] = 0
+
+    packed_class_index = Array(1, cint)
+    cur_packed_size = Array(1, cint)
+    unpacked_pos_index = Array(1, cint)
+    unpacked_pos_index[0] = 0
+    # if packing, convert client_statistics to the classes_num dimension
+    @if_e(packing_flag[0] == 1)
+    def _():
+        # iterate each split statistics
+        print_ln('packing_flag is true')
+        @for_range(global_split_num)
+        def _(i):
+            @for_range(used_classes_num * 2)
+            def _(j):
+                packed_class_index[0] = j % 2
+                # since the elements are arranged for left and right, first judge the index of used_classes_num
+                @if_e((packed_class_index[0] + 1) * MAX_PACKING_CAPACITY <= classes_num)
+                def _():
+                    cur_packed_size[0] = MAX_PACKING_CAPACITY
+                @else_
+                def _():
+                    cur_packed_size[0] = classes_num % MAX_PACKING_CAPACITY
+                unpacked_result = Array(MAX_PACKING_CAPACITY, sint)
+                unpacked_result = div_and_mod(clients_statistics[i][j], cur_packed_size[0])
+                @for_range(MAX_PACKING_CAPACITY)
+                def _(k):
+                    @if_(k < cur_packed_size[0])
+                    def _():
+                        @if_e(j % 2 == 0) #left
+                        def _():
+                            clients_statistics_new[i][unpacked_pos_index[0] + 2 * k] = unpacked_result[k]
+                        @else_ #right
+                        def _():
+                            clients_statistics_new[i][unpacked_pos_index[0] + 2 * k + 1] = unpacked_result[k]
+                unpacked_pos_index[0] = unpacked_pos_index[0] + 2 * cur_packed_size[0]
+    @else_
+    def _():
+        @for_range(global_split_num)
+        def _(i):
+            @for_range(used_classes_num * 2)
+            def _(j):
+                clients_statistics_new[i][j] = clients_statistics[i][j]
+
+    return clients_statistics_new
+
+def div_and_mod(value, cur_pack_size):
+    #print_ln('cur_pack_size = %s', cur_pack_size)
+    unpacked_result = Array(MAX_PACKING_CAPACITY, sfix)
+    reverse_index = Array(1, cint)
+    rounded_value = Array(1, sint)
+    tmp = Array(1, sint)
+    print_ln('value.v = %s', value.v.reveal())
+    rounded_value[0] = value.v / EXP2_16
+    @for_range(cur_pack_size)
+    def _(i):
+        reverse_index[0] = cur_pack_size - i - 1
+        aa = rounded_value[0].reveal()
+        tmp[0] = aa / radix_vector[reverse_index[0]]
+        #tmp[0] = rounded_value[0] / radix_vector[reverse_index[0]]
+        print_ln('tmp[0] = %s', tmp[0].reveal())
+        print_ln('rounded_value[0] = %s', rounded_value[0].reveal())
+        print_ln('radix_vector[%s] = %s', reverse_index[0], radix_vector[reverse_index[0]])
+        #tmp[0] = rounded_value[0].int_div(radix_vector[reverse_index[0]], 16)
+        unpacked_result[reverse_index[0]] = tmp[0]
+        rounded_value[0] = rounded_value[0] - (tmp[0] * radix_vector[reverse_index[0]])
+        print_ln('unpacked_result[%s] = %s', reverse_index[0], unpacked_result[reverse_index[0]].reveal())
+
+    return unpacked_result
+
 def main():
     """Listen in while loop for clients to join a game.
     Once maximum reached or have notified that round finished, run comparison and return result."""
@@ -329,12 +422,19 @@ def main():
         print_ln('used_classes_num = %s', used_classes_num)
         print_ln('Finish step 2')
 
+        @if_e(classes_num == used_classes_num)
+        def _():
+            packing_flag[0] = 0
+        @else_
+        def _():
+            packing_flag[0] = 1
+
         # init the values, otherwise there is problem
         @for_range(global_split_num)
         def _(i):
             clients_left_nums[i] = 0
             clients_right_nums[i] = 0
-            @for_range(classes_num * 2)
+            @for_range(used_classes_num * 2)
             def _(j):
                 clients_statistics[i][j] = 0
 
@@ -342,7 +442,7 @@ def main():
         # step 3: Receive and aggregate the clients input values
         @for_range(MAX_NUM_CLIENTS)
         def _(client_id):
-            input_statistics, input_left_nums, input_right_nums = client_input(client_id, global_split_num, classes_num)
+            input_statistics, input_left_nums, input_right_nums = client_input(client_id, global_split_num, used_classes_num)
             # aggregate into clients_statistics, clients_left_nums, clients_right_nums
             @for_range(global_split_num)
             def _(i):
@@ -352,22 +452,26 @@ def main():
                 #print_ln('input_right_nums[%s] = %s', i, input_right_nums[i].reveal())
                 #print_ln('clients_left_nums[%s] = %s', i, clients_left_nums[i].reveal())
                 #print_ln('clients_right_nums[%s] = %s', i, clients_right_nums[i].reveal())
-                @for_range(classes_num * 2)
+                @for_range(used_classes_num * 2)
                 def _(j):
                     clients_statistics[i][j] = clients_statistics[i][j] + input_statistics[i][j]
+                    #print_ln('input_statistics[%s][%s] = %s', i, j, input_statistics[i][j].reveal())
                     #print_ln('clients_statistics[%s][%s] = %s', i, j, clients_statistics[i][j].reveal())
 
         # truncate the overflow values around 0
         @for_range(global_split_num)
         def _(i):
-            @for_range(classes_num * 2)
+            @for_range(used_classes_num * 2)
             def _(j):
+                #print_ln('clients_statistics[%s][%s] = %s', i, j, clients_statistics[i][j].reveal())
                 @if_(mpc_math.abs_fx(clients_statistics[i][j]).reveal() < OVERFLOW_THRESHOLD)
                 def _():
                     clients_statistics[i][j] = 0
 
-
         print_ln('Finish step 3')
+
+        clients_statistics_new = sfix.Matrix(MAX_GLOBAL_SPLIT_NUM, MAX_CLASSES_NUM * 2)
+        clients_statistics_new = unpacking(clients_statistics, classes_num, used_classes_num, global_split_num)
 
         # step 4: Compute the Gini impurity or label variance according to the type
         # the first element is the sum of impurity, the second and third elements are left and right impurity, respectively
@@ -375,7 +479,7 @@ def main():
         @if_e(type == 0)
         def _():
             # compute Gini impurity
-            splits_impurity_copy = compute_gini(clients_statistics, clients_left_nums, clients_right_nums, global_split_num, classes_num)
+            splits_impurity_copy = compute_gini(clients_statistics_new, clients_left_nums, clients_right_nums, global_split_num, classes_num)
             @for_range(global_split_num)
             def _(i):
                 @for_range(3)
@@ -384,7 +488,7 @@ def main():
         @else_
         def _():
             # compute label variance
-            splits_impurity_copy = compute_variance(clients_statistics, clients_left_nums, clients_right_nums, global_split_num, classes_num)
+            splits_impurity_copy = compute_variance(clients_statistics_new, clients_left_nums, clients_right_nums, global_split_num, classes_num)
             @for_range(global_split_num)
             def _(i):
                 @for_range(3)
