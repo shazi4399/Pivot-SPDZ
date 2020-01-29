@@ -28,7 +28,7 @@ ARRAY_SIZE = 50
 MAX_NBITS = 14
 NULL = -2147483648
 
-FIXED_F = 16
+FIXED_F = 8
 FIXED_K = 31
 sfix.set_precision(FIXED_F, FIXED_K)
 cfix.set_precision(FIXED_F, FIXED_K)
@@ -180,8 +180,16 @@ def compute_variance(clients_statistics, clients_left_nums, clients_right_nums, 
     def _(i):
         left_variance[0] = 0.0
         right_variance[0] = 0.0
+        #print_ln('clients_statistics[%s][0] = %s', i, clients_statistics[i][0].reveal())
+        #print_ln('clients_statistics[%s][1] = %s', i, clients_statistics[i][1].reveal())
+        #print_ln('clients_statistics[%s][2] = %s', i, clients_statistics[i][2].reveal())
+        #print_ln('clients_statistics[%s][3] = %s', i, clients_statistics[i][3].reveal())
+
         left_variance[0] = (clients_statistics[i][2] / clients_left_nums[i]) - (clients_statistics[i][0] / clients_left_nums[i]) ** 2
         right_variance[0] = (clients_statistics[i][3] / clients_right_nums[i]) - (clients_statistics[i][1] / clients_right_nums[i]) ** 2
+
+        #print_ln('left_variance[0] = %s', left_variance[0].reveal())
+        #print_ln('right_variance[0] = %s', right_variance[0].reveal())
 
         left_variance[0] = (left_variance[0] * clients_left_nums[i]) / (clients_left_nums[i] + clients_right_nums[i])
         right_variance[0] = (right_variance[0] * clients_right_nums[i]) / (clients_left_nums[i] + clients_right_nums[i])
@@ -206,11 +214,11 @@ def find_best_split(splits_impurity, global_split_num):
     best_split_index = Array(1, cint)
     best_split_index[0] = -1
     best_impurity = Array(1, sfix)
-    best_impurity[0] = 2.0
+    best_impurity[0] = 20000.0
     best_left_impurity = Array(1, sfix)
-    best_left_impurity[0] = 1.0
+    best_left_impurity[0] = 10000.0
     best_right_impurity = Array(1, sfix)
-    best_right_impurity[0] = 1.0
+    best_right_impurity[0] = 10000.0
 
     @for_range(global_split_num)
     def _(i):

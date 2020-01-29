@@ -52,7 +52,7 @@
 #include "math.h"
 
 #define SPDZ_FIXED_PRECISION 16
-#define MAX_SPLIT_NUM 7
+#define MAX_SPLIT_NUM 16
 #define SPLIT_PERCENTAGE 0.8
 
 std::vector<int> setup_sockets(int n_parties, int my_client_id, const std::string host_name, int port_base) {
@@ -427,6 +427,8 @@ int main(int argc, char** argv)
             training_data.push_back(tmp);
         }
 
+        feature_num = feature_num - 1;
+
         for (int i = 0; i < (int) training_data.size(); i++) {
             for (int j = 0; j < (int) training_data[0].size(); j++) {
                 std::vector<float> x;
@@ -480,7 +482,7 @@ int main(int argc, char** argv)
             // the first one is the real split number
             // the rest are the split values
             std::vector<float> x;
-            cout << "feature " << j << ", split param　" << s << " = " << split_params[s] << endl;
+            //cout << "feature " << j << ", split param　" << s << " = " << split_params[s] << endl;
             x.push_back(split_params[s]);
             send_private_batch_shares(x, sockets, nparties);
         }

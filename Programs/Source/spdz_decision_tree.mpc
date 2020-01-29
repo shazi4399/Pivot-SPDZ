@@ -42,15 +42,15 @@ sfix.set_precision(FIXED_F, FIXED_K)
 cfix.set_precision(FIXED_F, FIXED_K)
 
 MAX_TREE_DEPTH = 3
-TREE_NODE_NUM = 15  # 2^(MAX_TREE_DEPTH + 1) - 1
-SAMPLE_NUM = 280
-CLASS_NUM = 2
-PRUNING_SAMPLE_NUM = 2
-MAX_SPLIT_NUM = 7
-FEATURE_NUM_CLIENT_1 = 13
-FEATURE_NUM_CLIENT_2 = 11
-FEATURE_NUM_CLIENT_3 = 11
-FEATURE_NUM = 35
+TREE_NODE_NUM = 127  # 2^(MAX_TREE_DEPTH + 1) - 1
+SAMPLE_NUM = 1700
+CLASS_NUM = 3
+PRUNING_SAMPLE_NUM = 5
+MAX_SPLIT_NUM = 16
+FEATURE_NUM_CLIENT_1 = 8
+FEATURE_NUM_CLIENT_2 = 7
+FEATURE_NUM_CLIENT_3 = 7
+FEATURE_NUM = 23
 PORT_NUM = 20000
 MAX_NUM_CLIENTS = 3
 OVERFLOW_THRESHOLD = 0.0001
@@ -121,7 +121,7 @@ def client_training_labels_input(client_socket_id):
     def _(i):
         tmp_array = sint.receive_from_client(1, client_socket_id)
         training_labels[i] = sfix._new(tmp_array[0])
-        print_ln('training_labels[%s] = %s', i, training_labels[i].reveal())
+        #print_ln('training_labels[%s] = %s', i, training_labels[i].reveal())
 
     print_ln('Read training labels from client %s finished', client_socket_id)
     return True
