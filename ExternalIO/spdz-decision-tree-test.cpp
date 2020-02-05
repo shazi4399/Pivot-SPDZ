@@ -37,7 +37,9 @@
 #include "Tools/int.h"
 #include "Math/Setup.h"
 #include "Protocols/fake-stuff.h"
-
+#include <cstdarg>
+#include <ctime>
+#include <cstdlib>
 #include <sodium.h>
 #include <iostream>
 #include <sstream>
@@ -54,6 +56,48 @@
 #define SPDZ_FIXED_PRECISION 8
 #define MAX_SPLIT_NUM 8
 #define SPLIT_PERCENTAGE 0.8
+#define LOGGER_HOME "/home/wuyuncheng/Documents/projects/CollaborativeML/log/"
+FILE * logger_out;
+
+std::string get_timestamp_str() {
+
+    time_t rawtime;
+    struct tm * timeinfo;
+    char buffer[80];
+
+    time (&rawtime);
+    timeinfo = localtime(&rawtime);
+
+    strftime(buffer,sizeof(buffer),"%d%m%Y%H%M%S",timeinfo);
+    std::string str(buffer);
+
+    return str;
+}
+
+void logger(FILE *out, const char *format, ...) {
+
+    char buf[BUFSIZ] = {'\0'};
+    char date_buf[50] = {'\0'};
+
+    va_list ap;
+    va_start(ap, format);
+    vsprintf(buf, format, ap);
+    va_end(ap);
+
+    time_t current_time;
+    current_time = time(NULL);
+    struct tm *tm_struct = localtime(&current_time);
+    sprintf(date_buf,"%04d-%02d-%02d %02d:%02d:%02d",
+            tm_struct->tm_year + 1900,
+            tm_struct->tm_mon + 1,
+            tm_struct->tm_mday,
+            tm_struct->tm_hour,
+            tm_struct->tm_min,
+            tm_struct->tm_sec);
+
+    fprintf(out, "%s %s", date_buf, buf);
+    fflush(out);
+}
 
 std::vector<int> setup_sockets(int n_parties, int my_client_id, std::vector<std::string> host_names, int port_base) {
 
@@ -394,13 +438,27 @@ int main(int argc, char** argv)
     if (argc > 4)
         port_base = atoi(argv[4]);
 
+    std::string logger_file_name = LOGGER_HOME;
+
+    logger_file_name += data_file;
+    logger_file_name += "_";
+    logger_file_name += get_timestamp_str();
+    logger_file_name += "_client";
+    logger_file_name += to_string(my_client_id);
+    logger_file_name += ".txt";
+    logger_out = fopen(logger_file_name.c_str(), "wb");
+
+
+    struct timeval spdz_training_1, spdz_training_2;
+    double spdz_training_time = 0;
+    gettimeofday(&spdz_training_1, NULL);
 
     // init static gfp
     string prep_data_prefix = get_prep_dir(nparties, 128, gf2n::default_degree());
     initialise_fields(prep_data_prefix);
     bigint::init_thread();
 
-    cout<<"Begin setup sockets"<<endl;
+    cout << "Begin setup sockets" << endl;
 
     // Setup connections from this client to each party socket
     vector<int> sockets = setup_sockets(nparties, my_client_id, host_names, port_base);
@@ -504,6 +562,13 @@ int main(int argc, char** argv)
     for (unsigned int i = 0; i < sockets.size(); i++) {
         close_client_socket(sockets[i]);
     }
+
+    gettimeofday(&spdz_training_2, NULL);
+    spdz_training_time += (double)((spdz_training_2.tv_sec - spdz_training_1.tv_sec) * 1000 +
+                                   (double)(spdz_training_2.tv_usec - spdz_training_1.tv_usec) / 1000);
+    logger(logger_out, "*********************************************************************");
+    logger(logger_out, "******** SPDZ training time: %'.3f ms **********\n", spdz_training_time);
+    logger(logger_out, "*********************************************************************");
 
     return 0;
 }
