@@ -27,7 +27,7 @@ import ml
 MAX_NBITS = 14
 NULL = -2147483648
 
-FIXED_F = 16
+FIXED_F = 8
 FIXED_K = 31
 sfix.set_precision(FIXED_F, FIXED_K)
 cfix.set_precision(FIXED_F, FIXED_K)

@@ -36,21 +36,21 @@ import ml
 MAX_NBITS = 14
 NULL = -2147483648
 
-FIXED_F = 16
+FIXED_F = 8
 FIXED_K = 31
 sfix.set_precision(FIXED_F, FIXED_K)
 cfix.set_precision(FIXED_F, FIXED_K)
 
-MAX_TREE_DEPTH = 3
+MAX_TREE_DEPTH = 5
 TREE_NODE_NUM = 127  # 2^(MAX_TREE_DEPTH + 1) - 1
-SAMPLE_NUM = 1700
-CLASS_NUM = 3
+SAMPLE_NUM = 8000
+CLASS_NUM = 6
 PRUNING_SAMPLE_NUM = 5
-MAX_SPLIT_NUM = 16
-FEATURE_NUM_CLIENT_1 = 8
-FEATURE_NUM_CLIENT_2 = 7
-FEATURE_NUM_CLIENT_3 = 7
-FEATURE_NUM = 23
+MAX_SPLIT_NUM = 8
+FEATURE_NUM_CLIENT_1 = 30
+FEATURE_NUM_CLIENT_2 = 30
+FEATURE_NUM_CLIENT_3 = 30
+FEATURE_NUM = 90
 PORT_NUM = 20000
 MAX_NUM_CLIENTS = 3
 OVERFLOW_THRESHOLD = 0.0001
@@ -398,6 +398,20 @@ def build_tree():
     return True
 
 
+# write result to all the clients, where best_split_index is public while best_left_impurity and best_right_impurity are private
+def write_result_to_clients(sockets, number_clients, finished):
+
+    # Send share of result to all clients. However, in this way, every client receives the final result, which is not desirable,
+    # should split the result array into number_clients shares, and send each share to each client
+
+    #print_ln('begin to write best_split_index to each client')
+    @for_range(number_clients)
+    def loop_body(i):
+        #print_ln('socket[%s] = %s', i, sockets[i])
+        cint.write_to_socket(sockets[i], finished)
+
+
+
 def main():
     """Listen for clients to join a game.
     Once maximum reached or have notified that round finished, run comparison and return result."""
@@ -405,75 +419,83 @@ def main():
     listen(PORT_NUM)
     print_ln('Listening for client connections on base port %s', PORT_NUM)
 
-    # Clients socket id (integer).
-    client_sockets = Array(MAX_NUM_CLIENTS, regint)
-    # Number of clients
-    number_clients = MemValue(regint(0))
-    # Keep track of received inputs
-    seen = Array(MAX_NUM_CLIENTS, regint)
-    seen.assign_all(0)
-
-    # step 1: Loop round waiting for each client to connect
     @do_while
-    def client_connections():
-        client_id = accept_client()
-        @if_(client_id >= MAX_NUM_CLIENTS)
-        def _():
-            print_ln('client id too high')
-            crash()
-        client_sockets[client_id] = client_id
-        seen[client_id] = 1
-        return sum(seen) < MAX_NUM_CLIENTS
+    def computing_loop():
 
-    print_ln('Finish step 1')
+        print_ln('Starting a new recursive node.')
 
-    # step 2: Receive training data from the clients
-    @for_range(MAX_NUM_CLIENTS)
-    def _(client_id):
-        client_training_data_input(client_id)
+        # Clients socket id (integer).
+        client_sockets = Array(MAX_NUM_CLIENTS, regint)
+        # Number of clients
+        number_clients = MemValue(regint(0))
+        # Keep track of received inputs
+        seen = Array(MAX_NUM_CLIENTS, regint)
+        seen.assign_all(0)
 
-    #@for_range(SAMPLE_NUM)
-    #def _(i):
-    #    @for_range(FEATURE_NUM)
-    #    def _(j):
-    #        print_ln('training_data[%s][%s] = %s', i, j, training_data[i][j].reveal())
+        # step 1: Loop round waiting for each client to connect
+        @do_while
+        def client_connections():
+            client_id = accept_client()
+            @if_(client_id >= MAX_NUM_CLIENTS)
+            def _():
+                print_ln('client id too high')
+                crash()
+            client_sockets[client_id] = client_id
+            seen[client_id] = 1
+            return sum(seen) < MAX_NUM_CLIENTS
 
-    print_ln('Finish step 2')
+        print_ln('Finish step 1')
 
-    # step 3: Receive training labels form client 0
-    client_training_labels_input(client_sockets[0])
+        # step 2: Receive training data from the clients
+        @for_range(MAX_NUM_CLIENTS)
+        def _(client_id):
+            client_training_data_input(client_id)
 
-    print_ln('Finish step 3')
+        #@for_range(SAMPLE_NUM)
+        #def _(i):
+        #    @for_range(FEATURE_NUM)
+        #    def _(j):
+        #        print_ln('training_data[%s][%s] = %s', i, j, training_data[i][j].reveal())
 
-    # step 4: Receive split parameters from the clients
-    @for_range(MAX_NUM_CLIENTS)
-    def _(client_id):
-        client_split_parameters(client_id)
+        print_ln('Finish step 2')
 
-    #@for_range(FEATURE_NUM)
-    #def _(i):
-    #    print_ln('split_nums[%s] = %s', i, split_nums[i].reveal())
-    #    @for_range(MAX_SPLIT_NUM + 1)
-    #    def _(j):
-    #        print_ln('split_values[%s][%s] = %s', i, j, split_values[i][j].reveal())
+        # step 3: Receive training labels form client 0
+        client_training_labels_input(client_sockets[0])
 
-    print_ln('Finish step 4')
+        print_ln('Finish step 3')
 
-    # step 5: Build tree
-    build_tree()
+        # step 4: Receive split parameters from the clients
+        @for_range(MAX_NUM_CLIENTS)
+        def _(client_id):
+            client_split_parameters(client_id)
 
-    print_ln('Finish step 5')
+        #@for_range(FEATURE_NUM)
+        #def _(i):
+        #    print_ln('split_nums[%s] = %s', i, split_nums[i].reveal())
+        #    @for_range(MAX_SPLIT_NUM + 1)
+        #    def _(j):
+        #        print_ln('split_values[%s][%s] = %s', i, j, split_values[i][j].reveal())
 
-    # truncate the overflow values around 0
-    #@for_range(global_split_num)
-    #def _(i):
-    #    @for_range(classes_num * 2)
-    #    def _(j):
-    #        @if_(mpc_math.abs_fx(clients_statistics[i][j]).reveal() < OVERFLOW_THRESHOLD)
-    #        def _():
-    #            clients_statistics[i][j] = 0
+        print_ln('Finish step 4')
 
-    return True
+        # step 5: Build tree
+        build_tree()
 
+        print_ln('Finish step 5')
+
+        finished = Array(1, cint)
+        finished[0] = 1
+        write_result_to_clients(client_sockets, MAX_NUM_CLIENTS, finished[0])
+
+        # truncate the overflow values around 0
+        #@for_range(global_split_num)
+        #def _(i):
+        #    @for_range(classes_num * 2)
+        #    def _(j):
+        #        @if_(mpc_math.abs_fx(clients_statistics[i][j]).reveal() < OVERFLOW_THRESHOLD)
+        #        def _():
+        #            clients_statistics[i][j] = 0
+
+        return True
 
 main()

@@ -51,17 +51,17 @@
 
 #include "math.h"
 
-#define SPDZ_FIXED_PRECISION 16
-#define MAX_SPLIT_NUM 16
+#define SPDZ_FIXED_PRECISION 8
+#define MAX_SPLIT_NUM 8
 #define SPLIT_PERCENTAGE 0.8
 
-std::vector<int> setup_sockets(int n_parties, int my_client_id, const std::string host_name, int port_base) {
+std::vector<int> setup_sockets(int n_parties, int my_client_id, std::vector<std::string> host_names, int port_base) {
 
     // Setup connections from this client to each party socket
     std::vector<int> sockets(n_parties);
     for (int i = 0; i < n_parties; i++)
     {
-        set_up_client_socket(sockets[i], host_name.c_str(), port_base + i);
+        set_up_client_socket(sockets[i], host_names[i].c_str(), port_base + i);
         send(sockets[i], (octet*) &my_client_id, sizeof(int));
 //        octetStream os;
 //        os.store(finish);
@@ -234,11 +234,12 @@ std::vector<float> receive_result(std::vector<int>& sockets, int n_parties, int 
 }
 
 
-std::vector< std::vector<float> > read_training_data(int client_id, int & feature_num, int & sample_num) {
+std::vector< std::vector<float> > read_training_data(int client_id, int & feature_num, int & sample_num, std::string data) {
 
-    std::string s1("/home/wuyuncheng/Documents/projects/CollaborativeML/data/datasets/");
+    std::string s1("/home/wuyuncheng/Documents/projects/CollaborativeML/data/");
+    std::string s11 = s1 + data + "/";
     std::string s2 = std::to_string(client_id);
-    std::string data_file = s1 + "client_" + s2 + ".txt";
+    std::string data_file = s11 + "client_" + s2 + ".txt";
 
     std::vector <std::vector<float>> local_data;
 
@@ -372,7 +373,11 @@ int main(int argc, char** argv)
     int my_client_id;
     int nparties;
     int port_base = 20000;
-    string host_name = "localhost";
+    std::vector<std::string> host_names;
+    //string host_name = "localhost";
+    host_names.push_back("127.0.0.1");
+    host_names.push_back("127.0.0.1");
+    host_names.push_back("127.0.0.1");
 
     if (argc < 3) {
         cout << "Usage is bankers-bonus-client <client identifier> <number of spdz parties> "
@@ -383,10 +388,12 @@ int main(int argc, char** argv)
 
     my_client_id = atoi(argv[1]);
     nparties = atoi(argv[2]);
+    std::string data_file = "m3_n10000_d30_c6";
     if (argc > 3)
-        host_name = argv[3];
+        data_file = argv[3];
     if (argc > 4)
         port_base = atoi(argv[4]);
+
 
     // init static gfp
     string prep_data_prefix = get_prep_dir(nparties, 128, gf2n::default_degree());
@@ -396,7 +403,7 @@ int main(int argc, char** argv)
     cout<<"Begin setup sockets"<<endl;
 
     // Setup connections from this client to each party socket
-    vector<int> sockets = setup_sockets(nparties, my_client_id, host_name, port_base);
+    vector<int> sockets = setup_sockets(nparties, my_client_id, host_names, port_base);
     cout << "sockets[0] = " << sockets[0] << endl;
     cout << "sockets[1] = " << sockets[1] << endl;
     cout << "sockets[2] = " << sockets[2] << endl;
@@ -404,7 +411,7 @@ int main(int argc, char** argv)
     cout << "Finish setup socket connections to SPDZ engines." << endl;
 
     int feature_num, sample_num;
-    std::vector< std::vector<float> > local_data = read_training_data(my_client_id, feature_num, sample_num);
+    std::vector< std::vector<float> > local_data = read_training_data(my_client_id, feature_num, sample_num, data_file);
 
     cout << "Correct read training data" << endl;
     cout << "sample_num = " << sample_num << endl;
@@ -489,6 +496,10 @@ int main(int argc, char** argv)
     }
 
     cout << "Finish send split parameters to SPDZ engines." << endl;
+
+    int finished = receive_index(sockets);
+
+    cout << "finished = " << finished << endl;
 
     for (unsigned int i = 0; i < sockets.size(); i++) {
         close_client_socket(sockets[i]);
