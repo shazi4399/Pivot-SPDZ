@@ -21,7 +21,7 @@ from Compiler.library import print_ln, do_while, for_range
 from Compiler.util import if_else
 
 PORTNUM = 14000
-MAX_NUM_CLIENTS = 8
+MAX_NUM_CLIENTS = 3
 
 def accept_client_input():
     """
@@ -99,6 +99,10 @@ def main():
             return (number_clients >= MAX_NUM_CLIENTS) + finish.reveal() == 0 
 
         winning_client_id = determine_winner(number_clients, client_values, client_ids)
+
+        @for_range_opt_multithread(4, 600)
+        def _(i):
+            print_ln('split %s', i)
 
         # print_ln('Found winner, index: %s.', winning_client_id.reveal())
 

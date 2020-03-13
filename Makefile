@@ -128,6 +128,9 @@ bmr-clean:
 bankers-bonus-client.x: ExternalIO/bankers-bonus-client.cpp $(COMMON)
 	$(CXX) $(CFLAGS) -o $@ $^ $(LDLIBS)
 
+bankers-bonus-client-bk.x: ExternalIO/bankers-bonus-client-bk.cpp $(COMMON)
+	$(CXX) $(CFLAGS) -o $@ $^ $(LDLIBS)
+
 bankers-bonus-commsec-client.x: ExternalIO/bankers-bonus-commsec-client.cpp $(COMMON)
 	$(CXX) $(CFLAGS) -o $@ $^ $(LDLIBS)
 
@@ -138,6 +141,12 @@ vfl-decision-tree-test.x: ExternalIO/vfl-decision-tree-test.cpp $(COMMON)
 	$(CXX) $(CFLAGS) -o $@ $^ $(LDLIBS)
 
 spdz-decision-tree-test.x: ExternalIO/spdz-decision-tree-test.cpp $(COMMON)
+	$(CXX) $(CFLAGS) -o $@ $^ $(LDLIBS)
+
+spdz-decision-tree-test-optimized.x: ExternalIO/spdz-decision-tree-test-optimized.cpp $(COMMON)
+	$(CXX) $(CFLAGS) -o $@ $^ $(LDLIBS)
+
+spdz-decision-tree-test-optimized-ext.x: ExternalIO/spdz-decision-tree-test-optimized-ext.cpp $(COMMON)
 	$(CXX) $(CFLAGS) -o $@ $^ $(LDLIBS)
 
 lib: $(LIB)

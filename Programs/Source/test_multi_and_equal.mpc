@@ -1,0 +1,287 @@
+# coding: latin-1
+"""
+  Provide decision tree MPC computation for CollaborativeML
+
+  Keep waiting enough clients connected to this program. Once enough clients connected, read the input values and compute the
+  logistic function, and return the gfp results (in the secret shared form) to the clients.
+
+  This program does in three steps:
+  (1) keep waiting enough clients MAX_NUM_CLIENTS connect, read the input values;
+  (2) compute the gini impurity or label variance using the secret shares;
+  (3) save as secret shares before returning the clients;
+
+  Note each client connects in a single thread and so is potentially blocked.
+
+  Each round / game will reset and so this runs indefinitiely.
+"""
+
+from Compiler.types import sint, regint, Array, MemValue
+from Compiler.instructions import listen, acceptclientconnection
+from Compiler.library import print_ln, do_while, for_range
+from Compiler.util import if_else
+from Compiler import mpc_math, floatingpoint
+from random import seed, randrange
+from Compiler.program import Program
+import ml
+import util
+import math
+
+ARRAY_SIZE = 50
+MAX_NBITS = 14
+NULL = -2147483648
+
+FIXED_F = 8
+FIXED_K = 31
+sfix.set_precision(FIXED_F, FIXED_K)
+cfix.set_precision(FIXED_F, FIXED_K)
+
+PORT_NUM = 18000
+MAX_NUM_CLIENTS = 3
+MAX_GLOBAL_SPLIT_NUM = 6000
+MAX_CLASSES_NUM = 16
+OVERFLOW_THRESHOLD = 0.0001
+
+TEST_N = 8000
+
+def compute_gini3(a, b, c, e, d):
+
+    splits_impurity = sfix.Matrix(MAX_GLOBAL_SPLIT_NUM, 3)
+    ls = Array(MAX_GLOBAL_SPLIT_NUM, sfix)
+    rs = Array(MAX_GLOBAL_SPLIT_NUM, sfix)
+    lp = sfix.Matrix(MAX_GLOBAL_SPLIT_NUM, MAX_CLASSES_NUM)
+    rp = sfix.Matrix(MAX_GLOBAL_SPLIT_NUM, MAX_CLASSES_NUM)
+    li = Array(MAX_GLOBAL_SPLIT_NUM, sfix)
+    ri = Array(MAX_GLOBAL_SPLIT_NUM, sfix)
+    cs = Array(MAX_GLOBAL_SPLIT_NUM, cint)
+
+    @for_range(MAX_GLOBAL_SPLIT_NUM)
+    def _(i):
+        cs[i] = d
+
+    @for_range_opt_multithread(4, 600)
+    def _(i):
+        print_ln('split %s', i)
+        ls[i] = 0
+        rs[i] = 0
+        li[i] = 1.0
+        ri[i] = 1.0
+        @for_range(cs[i]*2)
+        def _(j):
+            @if_e(j % 2 == 0)
+            def _():
+                ls[i] = ls[i] + a[i][j]
+            @else_
+            def _():
+                rs[i] = rs[i] + a[i][j]
+
+        @for_range(cs[i]*2)
+        def _(j):
+            x = j / 2
+            @if_e(j % 2 == 0)
+            def _():
+                lp[i][x] = a[i][j] / ls[i]
+            @else_
+            def _():
+                rp[i][x] = a[i][j] / rs[i]
+
+        @for_range(cs[i])
+        def _(j):
+            li[i] = li[i] - (lp[i][j] * lp[i][j])
+            ri[i] = ri[i] - (rp[i][j] * rp[i][j])
+
+        # add weighted impurity on 2020/01/07
+        li[i] = (li[i] * b[i]) / (b[i] + c[i])
+        ri[i] = (ri[i] * c[i]) / (b[i] + b[i])
+
+        splits_impurity[i][0] = li[i] + ri[i]
+        splits_impurity[i][1] = li[i]
+        splits_impurity[i][2] = ri[i]
+
+    return splits_impurity
+
+
+def compute_gini2(clients_statistics, clients_left_nums, clients_right_nums, global_split_num, classes_num):
+
+    splits_impurity = sfix.Matrix(MAX_GLOBAL_SPLIT_NUM, 3)
+    left_sum = Array(MAX_GLOBAL_SPLIT_NUM, sfix)
+    right_sum = Array(MAX_GLOBAL_SPLIT_NUM, sfix)
+    left_impurity = Array(MAX_GLOBAL_SPLIT_NUM, sfix)
+    right_impurity = Array(MAX_GLOBAL_SPLIT_NUM, sfix)
+    left_probs = sfix.Matrix(MAX_GLOBAL_SPLIT_NUM, MAX_CLASSES_NUM)
+    right_probs = sfix.Matrix(MAX_GLOBAL_SPLIT_NUM, MAX_CLASSES_NUM)
+    classes_nums = Array(MAX_GLOBAL_SPLIT_NUM, cint)
+
+    @for_range(MAX_GLOBAL_SPLIT_NUM)
+    def _(i):
+        classes_nums[i] = classes_num
+
+    print_ln('Begin compute gini impurity for %s splits', global_split_num)
+
+    @for_range_opt_multithread(4, 630)
+    def _(i):
+        print_ln('split %s', i)
+
+        left_sum[i] = 0
+        right_sum[i] = 0
+        left_impurity[i] = 1.0
+        right_impurity[i] = 1.0
+
+        # compute the sum of left and right branches
+        @for_range(classes_nums[i] * 2)
+        def _(j):
+            @if_e(j % 2 == 0)
+            def _():
+                left_sum[i] = left_sum[i] + clients_statistics[i][j]
+            @else_
+            def _():
+                right_sum[i] = right_sum[i] + clients_statistics[i][j]
+
+
+        # compute probabilities of each class
+        @for_range(classes_nums[i] * 2)
+        def _(j):
+            x = j / 2
+            @if_e(j % 2 == 0)
+            def _():
+                left_probs[i][x] = clients_statistics[i][j] / left_sum[i]
+            @else_
+            def _():
+                right_probs[i][x] = clients_statistics[i][j] / right_sum[i]
+
+        # compute left and right impurity
+        @for_range(classes_nums[i])
+        def _(j):
+            left_impurity[i] = left_impurity[i] - (left_probs[i][j] * left_probs[i][j])
+            right_impurity[i] = right_impurity[i] - (right_probs[i][j] * right_probs[i][j])
+
+        # add weighted impurity on 2020/01/07
+        left_impurity[i] = (left_impurity[i] * clients_left_nums[i]) / (clients_left_nums[i] + clients_right_nums[i])
+        right_impurity[i] = (right_impurity[i] * clients_right_nums[i]) / (clients_left_nums[i] + clients_right_nums[i])
+
+        @if_(mpc_math.abs_fx(left_impurity[i]).reveal() < 0.0001)
+        def _():
+            left_impurity[i] = 0
+
+        @if_(mpc_math.abs_fx(right_impurity[i]).reveal() < 0.0001)
+        def _():
+            right_impurity[i] = 0
+
+        splits_impurity[i][0] = left_impurity[i] + right_impurity[i]
+        splits_impurity[i][1] = left_impurity[i]
+        splits_impurity[i][2] = right_impurity[i]
+
+    return splits_impurity
+
+
+def compute_gini(a, b, c, e, d):
+
+    splits_impurity = sfix.Matrix(MAX_GLOBAL_SPLIT_NUM, 3)
+    ls = Array(MAX_GLOBAL_SPLIT_NUM, sfix)
+    rs = Array(MAX_GLOBAL_SPLIT_NUM, sfix)
+    lp = sfix.Matrix(MAX_GLOBAL_SPLIT_NUM, MAX_CLASSES_NUM)
+    rp = sfix.Matrix(MAX_GLOBAL_SPLIT_NUM, MAX_CLASSES_NUM)
+    li = Array(MAX_GLOBAL_SPLIT_NUM, sfix)
+    ri = Array(MAX_GLOBAL_SPLIT_NUM, sfix)
+    cs = Array(MAX_GLOBAL_SPLIT_NUM, cint)
+
+    @for_range(MAX_GLOBAL_SPLIT_NUM)
+    def _(i):
+        cs[i] = d
+
+    @for_range_opt_multithread(4, 600)
+    def _(i):
+        print_ln('split %s', i)
+        ls[i] = 0
+        rs[i] = 0
+        li[i] = 1.0
+        ri[i] = 1.0
+        @for_range(cs[i]*2)
+        def _(j):
+            @if_e(j % 2 == 0)
+            def _():
+                ls[i] = ls[i] + a[i][j]
+            @else_
+            def _():
+                rs[i] = rs[i] + a[i][j]
+
+        @for_range(cs[i]*2)
+        def _(j):
+            x = j / 2
+            @if_e(j % 2 == 0)
+            def _():
+                lp[i][x] = a[i][j] / ls[i]
+            @else_
+            def _():
+                rp[i][x] = a[i][j] / rs[i]
+
+        @for_range(cs[i])
+        def _(j):
+            li[i] = li[i] - (lp[i][j] * lp[i][j])
+            ri[i] = ri[i] - (rp[i][j] * rp[i][j])
+
+        # add weighted impurity on 2020/01/07
+        li[i] = (li[i] * b[i]) / (b[i] + c[i])
+        ri[i] = (ri[i] * c[i]) / (b[i] + b[i])
+
+        splits_impurity[i][0] = li[i] + ri[i]
+        splits_impurity[i][1] = li[i]
+        splits_impurity[i][2] = ri[i]
+
+    return splits_impurity
+
+def main():
+
+    @do_while
+    def game_loop():
+        print_ln('Starting a new round of the game.')
+
+        sample_iv = Array(TEST_N, sint)
+        split_iv = Array(TEST_N, sint)
+
+        @for_range(TEST_N)
+        def _(i):
+            sample_iv[i] = 1
+            split_iv[i] = 1
+
+
+        # test multiplication and add
+        @for_range(TEST_N)
+        def _(i):
+            sample_iv[i] = sample_iv[i] * split_iv[i]
+
+        sum = Array(1, sint)
+        sum[0] = 0
+        @for_range(TEST_N)
+        def _(i):
+            sum[0] = sum[0] + sample_iv[i]
+
+        num = Array(1, cint)
+        num[0] = 600
+
+        #test comparison
+        sum = Array(TEST_N, sint)
+        sum[0] = 0
+        @for_range_opt_multithread(4, num[0])
+        #@for_range(TEST_N)
+        def _(i):
+            @if_((sample_iv[i] == 1).reveal() == 1)
+            def _():
+                @if_((split_iv[i] == 1).reveal() == 1)
+                def _():
+                    print_ln('bingo')
+                    sum[i] = 1
+
+        @if_((sum[0] == 8000).reveal() == 1)
+        def _():
+            print_ln('result = %s', sum[0].reveal())
+        """
+        a = sfix.Matrix(600, 12)
+        b = Array(600, sfix)
+        c = Array(600, sfix)
+        d = 6
+        e = 600
+        compute_gini(a,b,c,e,d)
+        #compute_gini2(a,b,c,e,d)
+        compute_gini3(a,b,c,e,d)
+        """
+main()
