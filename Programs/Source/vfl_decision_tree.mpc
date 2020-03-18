@@ -24,20 +24,22 @@ from random import seed, randrange
 from Compiler.program import Program
 import ml
 
-ARRAY_SIZE = 50
+# default program parameters
 MAX_NBITS = 14
-NULL = -2147483648
-
-FIXED_F = 8
+FIXED_F = 4
 FIXED_K = 31
 sfix.set_precision(FIXED_F, FIXED_K)
 cfix.set_precision(FIXED_F, FIXED_K)
 
+# client related parameters
 PORT_NUM = 18000
 MAX_NUM_CLIENTS = 3
 MAX_GLOBAL_SPLIT_NUM = 6000
 MAX_CLASSES_NUM = 16
 OVERFLOW_THRESHOLD = 0.0001
+PRUNE_SAMPLE_NUM = 5
+PRUNE_VARIANCE_THRESHOLD = 0.0001
+MAX_SAMPLE_NUM = 100000
 
 # accept a client's connection
 def accept_client():
@@ -53,9 +55,64 @@ def client_public_parameters(client_socket_id):
     return input_parameters[0], input_parameters[1], input_parameters[2], input_parameters[3]
 
 
+# receive computation id
+def client_computation_id(client_socket_id):
+    input_parameters = Array(1, cint)
+    input_parameters = cint.read_from_socket(client_socket_id, 1)
+    return input_parameters[0]
+
+
+# receive pruning check information
+def clients_pruning_check_input(client_sockets, number_clients):
+    pruning_tree_type = Array(1, cint)
+    pruning_info = Array(2, sfix)
+    @for_range(2)
+    def _(i):
+        pruning_info[i] = 0.0
+
+    pruning_tree_type = cint.read_from_socket(client_sockets[0], 1)
+
+    tmp_array = Array(1, sint)
+    @for_range(number_clients)
+    def _(i):
+        @for_range(2)
+        def _(j):
+            tmp_array = sint.receive_from_client(1, client_sockets[i])
+            pruning_info[j] = pruning_info[j] + sfix._new(tmp_array[0])
+
+    #print_ln('pruning_tree_type = %s', pruning_tree_type)
+    #print_ln('pruning_info[0] = %s', pruning_info[0].reveal())
+    #print_ln('pruning_info[1] = %s', pruning_info[1].reveal())
+    return pruning_tree_type, pruning_info
+
+
+# receive label computation input
+def clients_label_computation_input(client_sockets, number_clients):
+    tree_type = Array(1, cint)
+    value_num = Array(1, cint)
+    tree_type = cint.read_from_socket(client_sockets[0], 1)
+    value_num = cint.read_from_socket(client_sockets[0], 1)
+    label_info = Array(MAX_CLASSES_NUM, sfix)
+    @for_range(MAX_CLASSES_NUM)
+    def _(i):
+        label_info[i] = 0.0
+
+    tmp_array = Array(1, sint)
+    tmp_array_2 = Array(1, sfix)
+    @for_range(number_clients)
+    def _(i):
+        @for_range(value_num[0])
+        def _(j):
+            tmp_array = sint.receive_from_client(1, client_sockets[i])
+            tmp_array_2[0] = sfix._new(tmp_array[0])
+            label_info[j] = label_info[j] + tmp_array_2[0]
+            #print_ln('label_info[%s] = %s', j, label_info[j].reveal())
+
+    return tree_type, value_num, label_info
+
+
 # receive a client's private inputs
 def client_input(client_socket_id, global_split_num, classes_num):
-
     input_statistics = sfix.Matrix(MAX_GLOBAL_SPLIT_NUM, MAX_CLASSES_NUM * 2)
     input_left_nums = Array(MAX_GLOBAL_SPLIT_NUM, sint)
     input_right_nums = Array(MAX_GLOBAL_SPLIT_NUM, sint)
@@ -101,7 +158,6 @@ def compute_gini(clients_statistics, clients_left_nums, clients_right_nums, glob
         right_probs = Array(MAX_CLASSES_NUM, sfix)
         left_impurity[0] = 1.0
         right_impurity[0] = 1.0
-
 
         # compute the sum of left and right branches
         @for_range(classes_num * 2)
@@ -168,11 +224,11 @@ def compute_gini(clients_statistics, clients_left_nums, clients_right_nums, glob
 
     return splits_impurity
 
+
 # compute variance for regression
 def compute_variance(clients_statistics, clients_left_nums, clients_right_nums, global_split_num, classes_num):
 
     splits_impurity = sfix.Matrix(MAX_GLOBAL_SPLIT_NUM, 3)
-
     left_variance = Array(1, sfix)
     right_variance = Array(1, sfix)
 
@@ -208,6 +264,7 @@ def compute_variance(clients_statistics, clients_left_nums, clients_right_nums, 
 
     return splits_impurity
 
+
 # find best split index
 def find_best_split(splits_impurity, global_split_num):
 
@@ -231,6 +288,8 @@ def find_best_split(splits_impurity, global_split_num):
     #print_ln('The found best_split_index[0] = %s', best_split_index[0])
     best_left_impurity[0] = splits_impurity[best_split_index][1]
     best_right_impurity[0] = splits_impurity[best_split_index][2]
+    #print_ln('best_left_impurity = %s', best_left_impurity[0].reveal())
+    #print_ln('best_right_impurity = %s', best_right_impurity[0].reveal())
 
     return best_split_index[0], best_left_impurity[0], best_right_impurity[0]
 
@@ -289,18 +348,65 @@ def write_result_to_clients(sockets, number_clients, best_split_index, best_left
         sint.write_shares_to_socket(sockets[i], sint_result_matrix[i])
 
 
+def write_result_to_clients_public(sockets, number_clients, value):
+    sint_val = Array(1, sint)
+    sint_val[0] = value.v
+    @for_range(number_clients)
+    def loop_body(i):
+        sint.write_shares_to_socket(sockets[i], sint_val[0])
+
+
+def check_pruning_condition(tree_type, sample_num, impurity):
+    satisfied = Array(1, sfix)
+    satisfied[0] = 0.0
+    @if_e((sample_num <= PRUNE_SAMPLE_NUM).reveal() == 1)
+    def _():
+        satisfied[0] = 1.0
+    @else_
+    def _():
+        @if_e(tree_type == 0)
+        def _():
+            @if_((impurity == 0.0).reveal() == 1)
+            def _():
+                satisfied[0] = 1.0
+        @else_
+        def _():
+            @if_((impurity < PRUNE_VARIANCE_THRESHOLD).reveal() == 1)
+            def _():
+                satisfied[0] = 1.0
+
+    return satisfied[0]
+
+
+def compute_label(tree_type, value_num, label_info):
+    label = Array(1, sfix)
+    majority_num = Array(1, sfix)
+    label[0] = -1
+    majority_num[0] = -1
+    @if_e(tree_type == 0)
+    def _():
+        @for_range(value_num)
+        def _(i):
+            @if_((label_info[i] > majority_num[0]).reveal() == 1)
+            def _():
+                majority_num[0] = label_info[i]
+                label[0] = i
+    @else_
+    def _():
+        label[0] = label_info[0] / label_info[1]
+
+    return label[0]
+
 def main():
-    """Listen in while loop for clients to join a game.
-    Once maximum reached or have notified that round finished, run comparison and return result."""
+    """Listen in while loop for clients to join a game. Once maximum reached or have notified that round finished, run comparison and return result."""
+
     # Start listening for client socket connections
     listen(PORT_NUM)
     print_ln('Listening for client connections on base port %s', PORT_NUM)
 
     @do_while
     def computing_loop():
-
         print_ln('Starting a new recursive node.')
-
         # Clients socket id (integer).
         client_sockets = Array(MAX_NUM_CLIENTS, regint)
         # Number of clients
@@ -321,99 +427,126 @@ def main():
             seen[client_id] = 1
             return sum(seen) < MAX_NUM_CLIENTS
 
-        # client secret inputs
-        clients_statistics = sfix.Matrix(MAX_GLOBAL_SPLIT_NUM, MAX_CLASSES_NUM * 2)
-        clients_left_nums = Array(MAX_GLOBAL_SPLIT_NUM, sint)
-        clients_right_nums = Array(MAX_GLOBAL_SPLIT_NUM, sint)
+        # receive a computation id and run the designated branch
+        comp_id = client_computation_id(client_sockets[0])
+        print_ln('comp_id = %s', comp_id)
 
-        print_ln('Finish step 1')
+        # pruning condition check
+        @if_(comp_id == 0)
+        def _():
+            pruning_tree_type = Array(1, cint)
+            pruning_info = Array(2, sfix)
+            pruning_tree_type, pruning_info = clients_pruning_check_input(client_sockets, MAX_NUM_CLIENTS)
+            satisfied = check_pruning_condition(pruning_tree_type[0], pruning_info[0], pruning_info[1])
+            print_ln('satisfied = %s', satisfied.reveal())
+            write_result_to_clients_public(client_sockets, MAX_NUM_CLIENTS, satisfied)
 
-        # step 2: Receive parameters for further computation
-        #print_ln('client_sockets[0] = %s', client_sockets[0])
-        type, global_split_num, classes_num, used_classes_num = client_public_parameters(client_sockets[0])
-        print_ln('type = %s', type)
-        print_ln('global_split_num = %s', global_split_num)
-        print_ln('classes_num = %s', classes_num)
-        print_ln('used_classes_num = %s', used_classes_num)
-        print_ln('Finish step 2')
+        # compute majority label
+        @if_(comp_id == 1)
+        def _():
+            tree_type = Array(1, cint)
+            value_num = Array(1, cint)
+            label_info = Array(MAX_CLASSES_NUM, sfix)
+            tree_type, value_num, label_info = clients_label_computation_input(client_sockets, MAX_NUM_CLIENTS)
+            label = compute_label(tree_type, value_num, label_info)
+            print_ln('label = %s', label.reveal())
+            write_result_to_clients_public(client_sockets, MAX_NUM_CLIENTS, label)
 
-        # init the values, otherwise there is problem
-        @for_range(global_split_num)
-        def _(i):
-            clients_left_nums[i] = 0
-            clients_right_nums[i] = 0
-            @for_range(classes_num * 2)
-            def _(j):
-                clients_statistics[i][j] = 0
+        # find best split
+        @if_(comp_id == 2)
+        def _():
+            # client secret inputs
+            clients_statistics = sfix.Matrix(MAX_GLOBAL_SPLIT_NUM, MAX_CLASSES_NUM * 2)
+            clients_left_nums = Array(MAX_GLOBAL_SPLIT_NUM, sint)
+            clients_right_nums = Array(MAX_GLOBAL_SPLIT_NUM, sint)
 
+            print_ln('Finish step 1')
 
-        # step 3: Receive and aggregate the clients input values
-        @for_range(MAX_NUM_CLIENTS)
-        def _(client_id):
-            input_statistics, input_left_nums, input_right_nums = client_input(client_id, global_split_num, classes_num)
-            # aggregate into clients_statistics, clients_left_nums, clients_right_nums
+            # step 2: Receive parameters for further computation
+            #print_ln('client_sockets[0] = %s', client_sockets[0])
+            type, global_split_num, classes_num, used_classes_num = client_public_parameters(client_sockets[0])
+            print_ln('type = %s', type)
+            print_ln('global_split_num = %s', global_split_num)
+            print_ln('classes_num = %s', classes_num)
+            print_ln('used_classes_num = %s', used_classes_num)
+            print_ln('Finish step 2')
+
+            # init the values, otherwise there is a problem
             @for_range(global_split_num)
             def _(i):
-                clients_left_nums[i] = clients_left_nums[i] + input_left_nums[i]
-                clients_right_nums[i] = clients_right_nums[i] + input_right_nums[i]
-                #print_ln('input_left_nums[%s] = %s', i, input_left_nums[i].reveal())
-                #print_ln('input_right_nums[%s] = %s', i, input_right_nums[i].reveal())
-                #print_ln('clients_left_nums[%s] = %s', i, clients_left_nums[i].reveal())
-                #print_ln('clients_right_nums[%s] = %s', i, clients_right_nums[i].reveal())
+                clients_left_nums[i] = 0
+                clients_right_nums[i] = 0
                 @for_range(classes_num * 2)
                 def _(j):
-                    clients_statistics[i][j] = clients_statistics[i][j] + input_statistics[i][j]
-                    #print_ln('clients_statistics[%s][%s] = %s', i, j, clients_statistics[i][j].reveal())
-
-        # truncate the overflow values around 0
-        @for_range(global_split_num)
-        def _(i):
-            @for_range(classes_num * 2)
-            def _(j):
-                @if_(mpc_math.abs_fx(clients_statistics[i][j]).reveal() < OVERFLOW_THRESHOLD)
-                def _():
                     clients_statistics[i][j] = 0
 
+            # step 3: Receive and aggregate the clients input values
+            @for_range(MAX_NUM_CLIENTS)
+            def _(client_id):
+                input_statistics, input_left_nums, input_right_nums = client_input(client_id, global_split_num, classes_num)
+                # aggregate into clients_statistics, clients_left_nums, clients_right_nums
+                @for_range(global_split_num)
+                def _(i):
+                    clients_left_nums[i] = clients_left_nums[i] + input_left_nums[i]
+                    clients_right_nums[i] = clients_right_nums[i] + input_right_nums[i]
+                    #print_ln('input_left_nums[%s] = %s', i, input_left_nums[i].reveal())
+                    #print_ln('input_right_nums[%s] = %s', i, input_right_nums[i].reveal())
+                    #print_ln('clients_left_nums[%s] = %s', i, clients_left_nums[i].reveal())
+                    #print_ln('clients_right_nums[%s] = %s', i, clients_right_nums[i].reveal())
+                    @for_range(classes_num * 2)
+                    def _(j):
+                        clients_statistics[i][j] = clients_statistics[i][j] + input_statistics[i][j]
+                        #print_ln('clients_statistics[%s][%s] = %s', i, j, clients_statistics[i][j].reveal())
 
-        print_ln('Finish step 3')
-
-        # step 4: Compute the Gini impurity or label variance according to the type
-        # the first element is the sum of impurity, the second and third elements are left and right impurity, respectively
-        splits_impurity = sfix.Matrix(MAX_GLOBAL_SPLIT_NUM, 3)
-        @if_e(type == 0)
-        def _():
-            # compute Gini impurity
-            splits_impurity_copy = compute_gini(clients_statistics, clients_left_nums, clients_right_nums, global_split_num, classes_num)
+            # truncate the overflow values around 0
             @for_range(global_split_num)
             def _(i):
-                @for_range(3)
+                @for_range(classes_num * 2)
                 def _(j):
-                    splits_impurity[i][j] = splits_impurity_copy[i][j]
-        @else_
-        def _():
-            # compute label variance
-            splits_impurity_copy = compute_variance(clients_statistics, clients_left_nums, clients_right_nums, global_split_num, classes_num)
-            @for_range(global_split_num)
-            def _(i):
-                @for_range(3)
-                def _(j):
-                    splits_impurity[i][j] = splits_impurity_copy[i][j]
+                    @if_(mpc_math.abs_fx(clients_statistics[i][j]).reveal() < OVERFLOW_THRESHOLD)
+                    def _():
+                        clients_statistics[i][j] = 0
 
-        print_ln('Finish step 4')
+            print_ln('Finish step 3')
 
-        # step 5: Determine the best split with minimum impurity on the sum of left and right branches
-        best_split_index, best_left_impurity, best_right_impurity = find_best_split(splits_impurity, global_split_num)
+            # step 4: Compute the Gini impurity or label variance according to the type
+            # the first element is the sum of impurity, the second and third elements are left and right impurity, respectively
+            splits_impurity = sfix.Matrix(MAX_GLOBAL_SPLIT_NUM, 3)
+            @if_e(type == 0)
+            def _():
+                # compute Gini impurity
+                splits_impurity_copy = compute_gini(clients_statistics, clients_left_nums, clients_right_nums, global_split_num, classes_num)
+                @for_range(global_split_num)
+                def _(i):
+                    @for_range(3)
+                    def _(j):
+                        splits_impurity[i][j] = splits_impurity_copy[i][j]
+            @else_
+            def _():
+                # compute label variance
+                splits_impurity_copy = compute_variance(clients_statistics, clients_left_nums, clients_right_nums, global_split_num, classes_num)
+                @for_range(global_split_num)
+                def _(i):
+                    @for_range(3)
+                    def _(j):
+                        splits_impurity[i][j] = splits_impurity_copy[i][j]
 
-        print_ln('Finish step 5')
+            print_ln('Finish step 4')
 
-        # step 6: Organize the result and send back to the clients
-        write_result_to_clients(client_sockets, MAX_NUM_CLIENTS, best_split_index, best_left_impurity, best_right_impurity)
-        print_ln('best_split_index = %s', best_split_index)
-        print_ln('best_left_impurity = %s', best_left_impurity.reveal())
-        print_ln('best_right_impurity = %s', best_right_impurity.reveal())
+            # step 5: Determine the best split with minimum impurity on the sum of left and right branches
+            best_split_index, best_left_impurity, best_right_impurity = find_best_split(splits_impurity, global_split_num)
 
-        print_ln('Finish step 6')
+            print_ln('Finish step 5')
 
+            # step 6: Organize the result and send back to the clients
+            write_result_to_clients(client_sockets, MAX_NUM_CLIENTS, best_split_index, best_left_impurity, best_right_impurity)
+            print_ln('best_split_index = %s', best_split_index)
+            print_ln('best_left_impurity = %s', best_left_impurity.reveal())
+            print_ln('best_right_impurity = %s', best_right_impurity.reveal())
+
+            print_ln('Finish step 6')
+
+        print_ln('comp_id = %s finished', comp_id)
         return True
 
 main()
