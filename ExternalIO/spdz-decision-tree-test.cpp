@@ -56,7 +56,7 @@
 #define SPDZ_FIXED_PRECISION 8
 #define MAX_SPLIT_NUM 8
 #define SPLIT_PERCENTAGE 0.8
-#define LOGGER_HOME "/home/wuyuncheng/Documents/projects/CollaborativeML/log/"
+#define LOGGER_HOME "/home/wuyuncheng/Documents/projects/Pivot-SPDZ/log/"
 FILE * logger_out;
 
 std::string get_timestamp_str() {

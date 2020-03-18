@@ -56,7 +56,7 @@
 #define SPDZ_FIXED_PRECISION 8
 #define MAX_SPLIT_NUM 8
 #define SPLIT_PERCENTAGE 0.8
-#define LOGGER_HOME "/home/wuyuncheng/Documents/projects/CollaborativeML/log/"
+#define LOGGER_HOME "/home/wuyuncheng/Documents/projects/Pivot-SPDZ/log/"
 FILE * logger_out;
 
 std::string get_timestamp_str() {
@@ -280,7 +280,7 @@ std::vector<float> receive_result(std::vector<int>& sockets, int n_parties, int 
 
 std::vector< std::vector<float> > read_training_data(int client_id, int & feature_num, int & sample_num, std::string data) {
 
-    std::string s1("/home/wuyuncheng/Documents/projects/CollaborativeML/data/");
+    std::string s1("/home/wuyuncheng/Documents/projects/Pivot/data/");
     std::string s11 = s1 + data + "/";
     std::string s2 = std::to_string(client_id);
     std::string data_file = s11 + "client_" + s2 + ".txt";
@@ -371,11 +371,11 @@ std::vector<float> compute_splits(std::vector<float> feature_values) {
     std::vector<int> sorted_indexes = sort_indexes(feature_values);
     int n_samples = feature_values.size();
     std::vector<float> distinct_values = compute_distinct_values(feature_values, sorted_indexes);
-
+    //cout << "feature " << ": distinct_values.size() = " << distinct_values.size() << std::endl;
     // if distinct values is larger than max_bins + 1, treat as continuous feature
     // otherwise, treat as categorical feature
     if (distinct_values.size() >= MAX_SPLIT_NUM + 1) {
-        // treat as continuous feature, find splits using quantile method (might not accurate when the values are imbalanced)
+        //TODO: treat as continuous feature, find splits using quantile method (might not accurate when the values are imbalanced)
         split_params.push_back(MAX_SPLIT_NUM);
         int n_sample_per_bin = n_samples / (MAX_SPLIT_NUM + 1);
         for (int i = 0; i < MAX_SPLIT_NUM; i++) {
@@ -430,6 +430,17 @@ void compute_feature_split_ivs(std::vector<float> feature_values, std::vector<fl
                 cur_split_iv_vector_right.push_back(1);
             }
         }
+        // test split iv computation correct
+        int sum_left = 0, sum_right = 0;
+        for (int i = 0; i < (int) feature_values.size(); i++) {
+            sum_left = sum_left + cur_split_iv_vector_left[i];
+            sum_right = sum_right + cur_split_iv_vector_right[i];
+        }
+
+        //cout << "sum left = " << sum_left << endl;
+        //cout << "sum right = " << sum_right << endl;
+        //cout << "feature_values.size() = " << feature_values.size() << endl;
+
         left_split_ivs.push_back(cur_split_iv_vector_left);
         right_split_ivs.push_back(cur_split_iv_vector_right);
     }
@@ -487,7 +498,7 @@ int main(int argc, char** argv)
 
     my_client_id = atoi(argv[1]);
     nparties = atoi(argv[2]);
-    std::string data_file = "m3_n10000_d30_c6";
+    std::string data_file = "bank_marketing_data";
     if (argc > 3)
         data_file = argv[3];
     if (argc > 4)
@@ -593,9 +604,9 @@ int main(int argc, char** argv)
         logger(logger_out, "Finish send training data to SPDZ engines.\n");
     }
 
-    // send split parameters
+    std::vector< std::vector<float> > feature_split_params;
+    std::vector< std::vector<float> > feature_values_array;
     for (int j = 0; j < feature_num; j++) {
-
         std::vector<float> feature_values;
         for (int i = 0; i < (int) training_data.size(); i++) {
             feature_values.push_back(training_data[i][j]);
@@ -607,21 +618,31 @@ int main(int argc, char** argv)
             logger(logger_out, "Error split params size.\n");
         }
 
+        feature_split_params.push_back(split_params);
+        feature_values_array.push_back(feature_values);
+    }
+
+    // send split parameters
+    for (int j = 0; j < feature_num; j++) {
         for (int s = 0; s < MAX_SPLIT_NUM + 1; s++) {
             // the first one is the real split number
             // the rest are the split values
             std::vector<float> x;
-            //cout << "feature " << j << ", split param　" << s << " = " << split_params[s] << endl;
-            x.push_back(split_params[s]);
+            //cout << "feature " << j << ", split param　" << s << " = " << feature_split_params[j][s] << endl;
+            x.push_back(feature_split_params[j][s]);
             send_private_batch_shares(x, sockets, nparties);
         }
+    }
+
+    for (int j = 0; j < feature_num; j++) {
 
         std::vector< std::vector<int> > left_ivs, right_ivs;
-        compute_feature_split_ivs(feature_values, split_params, left_ivs, right_ivs);
+        compute_feature_split_ivs(feature_values_array[j], feature_split_params[j], left_ivs, right_ivs);
 
         // send left ivs to SPDZ
         for (int s = 0; s < (int) left_ivs.size(); s++) {
             for (int i = 0; i < (int) left_ivs[0].size(); i++) {
+                //logger(logger_out, "left_ivs[%d][%d] = %d\n", s, i, left_ivs[s][i]);
                 vector<gfp> input_values_gfp(1);
                 input_values_gfp[0].assign(left_ivs[s][i]);
                 send_private_inputs(input_values_gfp, sockets, nparties);
@@ -636,6 +657,9 @@ int main(int argc, char** argv)
                 send_private_inputs(input_values_gfp, sockets, nparties);
             }
         }
+
+        cout << "left iv size = " << left_ivs.size() << endl;
+        cout << "right iv size = " << right_ivs.size() << endl;
     }
 
     logger(logger_out, "Finish send split parameters to SPDZ engines.\n");

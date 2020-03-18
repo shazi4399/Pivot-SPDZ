@@ -2,6 +2,17 @@
 """
   This is the spdz decision tree program.
 
+  Preparations: currently need to setup the hyper-parameters before compilation, including,
+        MAX_TREE_DEPTH: the maximum tree depth of the decision tree model
+        TREE_NODE_NUM: the maximum tree nodes in the model, i.e., 2^(MAX_TREE_DEPTH + 1) - 1
+        SAMPLE_NUM: the number of samples in the training dataset
+        CLASS_NUM: the number of classes in the classification task; if regression, set to 1
+        PRUNING_SAMPLE_NUM: the threshold number of samples required on any tree node
+        MAX_SPLIT_NUM: the maximum number of splits for any feature
+        MAX_NUM_CLIENTS: the total client number
+        FEATURE_NUM_CLIENT_i: the number of features for client i
+        FEATURE_NUM: the total feature number
+
   The main steps include:
   (1) keep waiting enough clients connected to this program. Once enough clients connected, read the training values as well as
   the split nums and split values;
@@ -33,24 +44,21 @@ from random import seed, randrange
 from Compiler.program import Program
 import ml
 
-MAX_NBITS = 14
-NULL = -2147483648
-
 FIXED_F = 8
 FIXED_K = 31
 sfix.set_precision(FIXED_F, FIXED_K)
 cfix.set_precision(FIXED_F, FIXED_K)
 
-MAX_TREE_DEPTH = 5
-TREE_NODE_NUM = 127  # 2^(MAX_TREE_DEPTH + 1) - 1
+MAX_TREE_DEPTH = 3
+TREE_NODE_NUM = 2^(MAX_TREE_DEPTH + 1) - 1
 SAMPLE_NUM = 8000
-CLASS_NUM = 6
+CLASS_NUM = 2
 PRUNING_SAMPLE_NUM = 5
 MAX_SPLIT_NUM = 8
-FEATURE_NUM_CLIENT_1 = 30
-FEATURE_NUM_CLIENT_2 = 30
-FEATURE_NUM_CLIENT_3 = 30
-FEATURE_NUM = 90
+FEATURE_NUM_CLIENT_1 = 6
+FEATURE_NUM_CLIENT_2 = 5
+FEATURE_NUM_CLIENT_3 = 5
+FEATURE_NUM = 16
 PORT_NUM = 20000
 MAX_NUM_CLIENTS = 3
 OVERFLOW_THRESHOLD = 0.0001
@@ -69,6 +77,7 @@ tree_nodes = Array(TREE_NODE_NUM, cint)                  # updated during traini
 sample_ivs = sint.Matrix(TREE_NODE_NUM, SAMPLE_NUM)      # updated during training
 feature_ivs = cint.Matrix(TREE_NODE_NUM, FEATURE_NUM)    # updated during training
 is_satisfied = Array(1, cint)
+
 
 # accept a client's connection
 def accept_client():
@@ -96,7 +105,6 @@ def client_split_parameters(client_socket_id):
                 #print_ln('i = %s, start_index[0] = %s', i, start_index[0])
 
     print_ln('client_socket_id = %s, start_index[0] = %s', client_socket_id, start_index[0])
-
     tmp_array = Array(1, sint)
     @for_range(feature_nums[client_socket_id])
     def _(i):
@@ -145,7 +153,6 @@ def client_training_data_input(client_socket_id):
                 start_index[0] = start_index[0] + feature_nums[i]
 
     tmp_array = Array(1, sint)
-
     @for_range(SAMPLE_NUM)
     def _(i):
         @for_range(feature_nums[client_socket_id])
@@ -161,7 +168,6 @@ def client_training_data_input(client_socket_id):
 def check_pruning_conditions(node_index):
 
     print_ln('node_index = %s', node_index)
-
     is_satisfied[0] = 0
 
     # check node depth
@@ -179,7 +185,6 @@ def check_pruning_conditions(node_index):
             feature_sum[0] = feature_sum[0] + feature_ivs[node_index][i]
 
         print_ln('feature_sum[0] = %s', feature_sum[0])
-
         @if_e(feature_sum[0] == 0)
         def _():
             is_satisfied[0] = 1
@@ -194,7 +199,6 @@ def check_pruning_conditions(node_index):
                 sample_sum[0] = sample_sum[0] + sample_ivs[node_index][i]
 
             print_ln('sample_sum[0] = %s', sample_sum[0].reveal())
-
             @if_e(sample_sum[0].reveal() == 0)
             def _():
                 is_satisfied[0] = 1
@@ -222,7 +226,6 @@ def check_pruning_conditions(node_index):
                         non_zero_count[0] = non_zero_count[0] + 1
 
                 print_ln('non_zero_count[0] = %s', non_zero_count[0].reveal())
-
                 @if_(non_zero_count[0] == 1)
                 def _():
                     is_satisfied[0] = 1
@@ -409,7 +412,6 @@ def write_result_to_clients(sockets, number_clients, finished):
     def loop_body(i):
         #print_ln('socket[%s] = %s', i, sockets[i])
         cint.write_to_socket(sockets[i], finished)
-
 
 
 def main():
