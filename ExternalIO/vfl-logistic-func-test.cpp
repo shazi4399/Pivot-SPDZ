@@ -117,11 +117,11 @@ void send_private_inputs(const std::vector<gfp>& values, std::vector<int>& socke
 void send_private_batch_shares(std::vector<float> shares, std::vector<int>& sockets, int n_parties) {
 
     int number_inputs = shares.size();
-    std::vector<long> long_shares(number_inputs);
+    std::vector<int64_t> long_shares(number_inputs);
 
     // step 1: convert to int or long according to the fixed precision
     for (int i = 0; i < number_inputs; ++i) {
-        long_shares[i] = static_cast<int>(round(shares[i] * pow(2, SPDZ_FIXED_PRECISION)));
+        long_shares[i] = static_cast<int64_t>(round(shares[i] * pow(2, SPDZ_FIXED_PRECISION)));
     }
 
     // step 2: convert to the gfp value and call send_private_inputs
@@ -179,7 +179,7 @@ std::vector<float> receive_result(std::vector<int>& sockets, int n_parties, int 
         gfp val = output_values[i];
         bigint aa;
         to_signed_bigint(aa, val);
-        long t = aa.get_si();
+        int64_t t = aa.get_si();
         //cout<< "i = " << i << ", t = " << t <<endl;
         res_shares[i] = static_cast<float>(t * pow(2, -SPDZ_FIXED_PRECISION));
     }
@@ -216,7 +216,7 @@ int main(int argc, char** argv)
 
     cout<<"Begin setup sockets"<<endl;
 
-    for (int i = 0; i < 10; i++) {
+    for (int i = 0; i < 2; i++) {
 
         cout <<" ****** iteration " << i << "******" << endl;
 
@@ -225,10 +225,10 @@ int main(int argc, char** argv)
         cout << "Finish setup socket connections to SPDZ engines." << endl;
 
         // Map inputs into gfp
-        int size = 50;
+        int size = 3;
         vector<float> shares(size);
         for (int i = 0; i < size; i++) {
-            shares[i] = my_client_id * 0.1 + i * (-0.1) + 0.0;
+            shares[i] = 218388607 + my_client_id;
             //cout << shares[i] << endl;
         }
 

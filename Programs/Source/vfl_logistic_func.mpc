@@ -24,7 +24,7 @@ from random import seed, randrange
 from Compiler.program import Program
 import ml
 
-ARRAY_SIZE = 50
+ARRAY_SIZE = 3
 MAX_NBITS = 14
 NULL = -2147483648
 
@@ -151,11 +151,13 @@ def main():
             inputs = Array(ARRAY_SIZE, sint)
             inputs = client_input(client_id)
             for j in range(ARRAY_SIZE):
+                print_ln('inputs[%s] = %s', j, inputs[j].reveal())
                 client_values[client_id][j] = sfix._new(inputs[j])
+                print_ln('inputs[%s] = %s', j, client_values[client_id][j].reveal())
 
         # step 2: compute the logistic function
 
-        result = sfix.Array(ARRAY_SIZE)
+        #result = sfix.Array(ARRAY_SIZE)
         result = logistic_func(client_values)
 
         # step 3: write values back to the clients
