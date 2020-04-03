@@ -35,7 +35,7 @@ cfix.set_precision(FIXED_F, FIXED_K)
 PORT_NUM = 18000
 MAX_NUM_CLIENTS = 3
 MAX_GLOBAL_SPLIT_NUM = 6000
-MAX_CLASSES_NUM = 16
+MAX_CLASSES_NUM = 5
 OVERFLOW_THRESHOLD = 0.0001
 PRUNE_SAMPLE_NUM = 5
 PRUNE_VARIANCE_THRESHOLD = 0.0001
@@ -273,9 +273,9 @@ def find_best_split(splits_impurity, global_split_num):
     best_impurity = Array(1, sfix)
     best_impurity[0] = 20000.0
     best_left_impurity = Array(1, sfix)
-    best_left_impurity[0] = 10000.0
+    best_left_impurity[0] = 100000.0
     best_right_impurity = Array(1, sfix)
-    best_right_impurity[0] = 10000.0
+    best_right_impurity[0] = 100000.0
 
     @for_range(global_split_num)
     def _(i):
@@ -396,6 +396,107 @@ def compute_label(tree_type, value_num, label_info):
         label[0] = label_info[0] / label_info[1]
 
     return label[0]
+
+###########    GBDT Specific Computations   ###########
+
+# receive client 0's public parameters
+def client_gbdt_public_parameters(client_socket_id):
+    input_parameters = Array(2, cint)
+    input_parameters = cint.read_from_socket(client_socket_id, 2)
+    return input_parameters[0], input_parameters[1]
+
+def clients_gbdt_label_input(client_sockets, number_clients, vector_size):
+    input_label_vector = Array(MAX_SAMPLE_NUM * MAX_CLASSES_NUM, sfix)
+    tmp_array = Array(1, sint)
+    @for_range(vector_size)
+    def _(j):
+        input_label_vector[j] = 0.0
+
+    @for_range(number_clients)
+    def _(i):
+        @for_range(vector_size)
+        def _(j):
+            tmp_array = sint.receive_from_client(1, client_sockets[i])
+            input_label_vector[j] = input_label_vector[j] + sfix._new(tmp_array[0])
+
+    print_ln('Finish gbdt squared label input')
+    return input_label_vector
+
+def compute_squared_label(input_label_vector, sample_size):
+    squared_label_vector = Array(MAX_SAMPLE_NUM * MAX_CLASSES_NUM, sfix)
+    @for_range(sample_size)
+    def _(i):
+        squared_label_vector[i] = input_label_vector[i] * input_label_vector[i]
+
+    print_ln('input_label_vector[0] = %s, squared_label_vector[0] = %s', input_label_vector[0].reveal(), squared_label_vector[0].reveal())
+    print_ln('Finish computation of squared label')
+    return squared_label_vector
+
+def compute_softmax_label(input_label_vector, sample_size, classes_num):
+    # note that input_label_vector should be with sample_size * classes_num elements
+    print_ln('input_label_vector[0] = %s', input_label_vector[0].reveal())
+    print_ln('input_label_vector[%s] = %s', sample_size, input_label_vector[sample_size].reveal())
+    softmax_label_vector = Array(MAX_SAMPLE_NUM * MAX_CLASSES_NUM, sfix)
+    @for_range(sample_size)
+    def _(i):
+        temp_softmax_sum = Array(1, sfix)
+        temp_softmax_sum[0] = 0.0
+        temp_softmax_classes = Array(MAX_CLASSES_NUM, sfix)
+        # compute softmax function
+        @for_range(classes_num)
+        def _(j):
+            temp_softmax_classes[j] = ml.exp(input_label_vector[j * sample_size + i])
+            temp_softmax_sum[0] = temp_softmax_sum[0] + temp_softmax_classes[j]
+        # assign new values
+        @for_range(classes_num)
+        def _(j):
+            softmax_label_vector[j * sample_size + i] = temp_softmax_classes[j] / temp_softmax_sum[0]
+
+        @if_(i == 0)
+        def _():
+            print_ln('temp_softmax_sum[0] = %s', temp_softmax_sum[0].reveal())
+            print_ln('temp_softmax_classes[0] = %s', temp_softmax_classes[0].reveal())
+            print_ln('temp_softmax_classes[1] = %s', temp_softmax_classes[1].reveal())
+            print_ln('softmax_label_vector[0] = %s', softmax_label_vector[0].reveal())
+            print_ln('softmax_label_vector[%s] = %s', sample_size, softmax_label_vector[sample_size].reveal())
+
+    print_ln('Finish computation of softmax label')
+    return softmax_label_vector
+
+def write_secret_shares_to_clients(sockets, number_clients, secret_vector, vector_size):
+
+    # Send share of result to all clients. However, in this way, every client receives the final result, which is not desirable,
+    # should split the result array into number_clients shares, and send each share to each client
+
+    # 1. split secret_vector into number_clients shares
+    sint_vector = Array(MAX_SAMPLE_NUM * MAX_CLASSES_NUM, sint)
+    @for_range(vector_size)
+    def _(i):
+        sint_vector[i] = secret_vector[i].v
+
+    sint_vector_share_matrix = sint.Matrix(MAX_NUM_CLIENTS, MAX_SAMPLE_NUM * MAX_CLASSES_NUM)
+    temp_sum = Array(1, sint)
+    @for_range(vector_size)
+    def outer_loop(j):
+        temp_sum[0] = 0
+        @for_range(number_clients)
+        def inner_loop(i):
+            @if_e(i < number_clients - 1)
+            def _():
+                random_ij = sint.get_random_int(MAX_NBITS)
+                temp_sum[0] = temp_sum[0] + random_ij
+                sint_vector_share_matrix[i][j] = random_ij
+            @else_
+            def _():
+                sint_vector_share_matrix[i][j] = sint_vector[j] - temp_sum[0]
+
+    # 2. write to clients
+    @for_range(number_clients)
+    def loop_body(i):
+        sint.write_shares_to_socket(sockets[i], sint_vector_share_matrix[i])
+
+    print_ln('Finish write shares to clients')
+
 
 def main():
     """Listen in while loop for clients to join a game. Once maximum reached or have notified that round finished, run comparison and return result."""
@@ -545,6 +646,44 @@ def main():
             print_ln('best_right_impurity = %s', best_right_impurity.reveal())
 
             print_ln('Finish step 6')
+
+        # compute squared labels for GBDT encrypted labels
+        @if_(comp_id == 3)
+        def _():
+            # step 1: read public parameters
+            sample_size, classes_num = client_gbdt_public_parameters(client_sockets[0])
+
+            # step 2: read label shares with training sample size
+            input_label_vector = Array(MAX_SAMPLE_NUM, sfix)
+            input_label_vector = clients_gbdt_label_input(client_sockets, MAX_NUM_CLIENTS, sample_size)
+
+            # step 3: compute squared label
+            squared_label_vector = Array(MAX_SAMPLE_NUM, sfix)
+            squared_label_vector = compute_squared_label(input_label_vector, sample_size)
+
+            # step 4: split into shares and write back to the clients
+            write_secret_shares_to_clients(client_sockets, MAX_NUM_CLIENTS, squared_label_vector, sample_size)
+
+            print_ln('Finish squared label computation')
+
+        # compute softmax labels for GBDT classification
+        @if_(comp_id == 4)
+        def _():
+            # step 1: read public parameters
+            sample_size, classes_num = client_gbdt_public_parameters(client_sockets[0])
+
+            # step 2: read label shares with training sample size * classes_num
+            input_label_vector = Array(MAX_SAMPLE_NUM * MAX_CLASSES_NUM, sfix)
+            input_label_vector = clients_gbdt_label_input(client_sockets, MAX_NUM_CLIENTS, sample_size * classes_num)
+
+            # step 3: compute softmax function for each classes_num labels for each sample
+            softmax_label_vector = Array(MAX_SAMPLE_NUM * MAX_CLASSES_NUM, sfix)
+            softmax_label_vector = compute_softmax_label(input_label_vector, sample_size, classes_num)
+
+            # step 4: split into shares and write back to the clients
+            write_secret_shares_to_clients(client_sockets, MAX_NUM_CLIENTS, softmax_label_vector, sample_size * classes_num)
+
+            print_ln('Finish softmax computation')
 
         print_ln('comp_id = %s finished', comp_id)
         return True
