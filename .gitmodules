@@ -1,6 +1,8 @@
 [submodule "SimpleOT"]
 	path = SimpleOT
-	url = https://github.com/mkskeller/SimpleOT
+	url = https://github.com/mkskeller/SimpleOT.git
+	branch = 96f8a97e6c
 [submodule "mpir"]
 	path = mpir
-	url = git://github.com/wbhart/mpir.git
+	url = https://github.com/wbhart/mpir.git
+	branch = 55fe6a9f52
