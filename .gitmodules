@@ -5,4 +5,3 @@
 [submodule "mpir"]
 	path = mpir
 	url = https://github.com/wbhart/mpir.git
-	branch = 55fe6a9f52
